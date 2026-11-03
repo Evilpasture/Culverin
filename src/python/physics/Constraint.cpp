@@ -10,6 +10,7 @@
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
 #include <Jolt/Physics/Constraints/SliderConstraint.h>
 #include <Jolt/Physics/Constraints/TwoBodyConstraint.h>
+#include "bindings/Result.hpp"
 
 namespace CPH::Python {
 namespace {
@@ -26,7 +27,7 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
 } // namespace
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-[[nodiscard]] PyObject * WorldCreateConstraint(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldCreateConstraint(PhysicsWorldObject *self,
                                                                  PyObject *const *args,
                                                                  size_t nargsf, PyObject *kwnames) {
 
@@ -42,12 +43,12 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
                                            h2_raw, o_params, o_motor);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     if (h1_raw == h2_raw) [[unlikely]] {
         PyErr_SetString(PyExc_ValueError, "Cannot create a constraint between a body and itself");
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     // 2. PARAMS EXTRACTION
@@ -74,12 +75,12 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
         break;
     default:
         PyErr_SetString(PyExc_ValueError, "Unknown constraint type");
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     if (!parse_result) {
         RaiseParseError(parse_result.error());
-        return nullptr;
+        return Adopt(nullptr);
     }
     if (o_motor) {
         ParseMotorConfig(o_motor, p);
@@ -96,21 +97,21 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
     if (!resolved1 || !resolved2) {
         (self->physics.shadowLock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-        return nullptr;
+        return Adopt(nullptr);
     }
     const uint32_t s1 = *resolved1;
     const uint32_t s2 = *resolved2;
 
     if (self->physics.freeConstraintCount == 0) [[unlikely]] {
         (self->physics.shadowLock).unlock();
-        return PyErr_Format(PyExc_MemoryError, "Max constraints reached");
+        return Adopt(PyErr_Format(PyExc_MemoryError, "Max constraints reached"));
     }
 
     // 4. QUEUE ASYNCHRONOUS COMMAND (capacity first so failure paths
     // cannot leak the reserved slot; params travel by value).
     if (!self->physics.EnsureCommandCapacity()) [[unlikely]] {
         (self->physics.shadowLock).unlock();
-        return PyErr_NoMemory();
+        return Adopt(PyErr_NoMemory());
     }
 
     // Reserve constraint slot
@@ -122,11 +123,11 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
     self->physics.EnqueueCommand(s1, CPH::cmd::CreateConstraint{s2, c_slot, type, p});
 
     (self->physics.shadowLock).unlock();
-    return PyLong_FromUnsignedLongLong(handle.Raw());
+    return Adopt(PyLong_FromUnsignedLongLong(handle.Raw()));
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-[[nodiscard]] PyObject * WorldDestroyConstraint(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldDestroyConstraint(PhysicsWorldObject *self,
                                                                   PyObject *const *args,
                                                                   size_t nargsf,
                                                                   PyObject *kwnames) {
@@ -139,7 +140,7 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
         self->parsers->destroyConstr.Parse(args, nargs, kwnames, h_raw);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     JPH::Constraint *c_to_destroy = nullptr;
@@ -156,7 +157,7 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
     if (slot >= self->physics.constraints.size()) {
         (self->physics.shadowLock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
-        return nullptr;
+        return Adopt(nullptr);
     }
     ConstraintSlot &entry = self->physics.constraints[slot];
     const uint8_t state   = entry.state.load(std::memory_order::relaxed);
@@ -165,7 +166,7 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
     if (entry.generation != gen || (state != std::to_underlying(SlotState::Alive) && state != std::to_underlying(SlotState::PendingCreate))) {
         (self->physics.shadowLock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     c_to_destroy = entry.constraint;
@@ -196,10 +197,10 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
         self->physics.physicsSystem.RemoveConstraint(c_to_destroy);
     }
 
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
-[[nodiscard]] PyObject * WorldSetConstraintTarget(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldSetConstraintTarget(PhysicsWorldObject *self,
                                                                     PyObject *const *args,
                                                                     size_t nargsf,
                                                                     PyObject *kwnames) {
@@ -211,7 +212,7 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
                                               target);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     // The sub-type dispatch, the motor state machine and the body wake-ups are
@@ -225,12 +226,12 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
 
     if (!applied) {
         PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
-        return nullptr;
+        return Adopt(nullptr);
     }
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
-[[nodiscard]] PyObject * WorldGetConstraintType(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetConstraintType(PhysicsWorldObject *self,
                                                                   PyObject *const *args,
                                                                   size_t nargsf,
                                                                   PyObject *kwnames) {
@@ -240,7 +241,7 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
         self->parsers->hOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     (self->physics.shadowLock).lock();
@@ -255,7 +256,7 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
                      self->physics.constraints[slot].generation != gen) [[unlikely]] {
         (self->physics.shadowLock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     const uint8_t state =
@@ -267,13 +268,13 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
         // This is safe even if Jolt hasn't built the object yet.
         int type = self->physics.constraints[slot].type;
         (self->physics.shadowLock).unlock();
-        return PyLong_FromLong(static_cast<long>(type));
+        return Adopt(PyLong_FromLong(static_cast<long>(type)));
     }
 
     // If state is SlotState::Empty or PENDING_DESTROY
     (self->physics.shadowLock).unlock();
     PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-    return nullptr;
+    return Adopt(nullptr);
 }
 
 /*

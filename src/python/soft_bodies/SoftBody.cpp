@@ -72,7 +72,7 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
 
 // --- SharedSettings Topology Methods ---
 
-[[nodiscard]] PyObject * SoftBodySharedSettingsAddVertex(SoftBodySharedSettingsObject *self,
+[[nodiscard]] BoundResult SoftBodySharedSettingsAddVertex(SoftBodySharedSettingsObject *self,
                                                          PyObject *const *args, size_t nargsf,
                                                          PyObject *kwnames) {
     const Py_ssize_t nargs           = PyVectorcall_NARGS(nargsf);
@@ -86,19 +86,19 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
         self->parsers->sbssAddVertex.Parse(args, nargs, kwnames, o_pos, inv_mass, o_vel);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     if (self->settings->optimized()) {
         PyErr_SetString(PyExc_RuntimeError, kOptimizedMessageSingle);
-        return nullptr;
+        return FailCurrent();
     }
 
     // 1. Parse Position (Required)
     JPH::Float3 pos = {};
     if (ParseResult parsed_pos = ParseVec3Into(o_pos, pos.x, pos.y, pos.z); !parsed_pos) {
         RaiseParseError(parsed_pos.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     // 2. Parse Velocity (Optional)
@@ -106,16 +106,16 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     if (o_vel && o_vel != Py_None) {
         if (ParseResult parsed_vel = ParseVec3Into(o_vel, vel.x, vel.y, vel.z); !parsed_vel) {
             RaiseParseError(parsed_vel.error());
-            return nullptr;
+            return FailCurrent();
         }
     }
 
     // 3. Native append
     self->settings->AddVertex(pos, vel, inv_mass);
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
-[[nodiscard]] PyObject * SoftBodySharedSettingsAddVertices(SoftBodySharedSettingsObject *self,
+[[nodiscard]] BoundResult SoftBodySharedSettingsAddVertices(SoftBodySharedSettingsObject *self,
                                                            PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
@@ -127,21 +127,21 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
         self->parsers->sbssAddVertices.Parse(args, nargs, kwnames, o_pos, o_mass, o_vel);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
     if (self->settings->optimized()) {
-        return PyErr_Format(PyExc_RuntimeError, kOptimizedMessageBatch);
+        return Adopt(PyErr_Format(PyExc_RuntimeError, kOptimizedMessageBatch));
     }
 
     // 1. Buffer Acquisitions
     const auto pos_view = BufferView::Acquire(o_pos);
     if (!pos_view) {
-        return nullptr;
+        return FailCurrent();
     }
 
     constexpr auto vec3_size = 3 * sizeof(float);
     if (!pos_view->RequireMultipleOf(vec3_size, "positions must be float32 triplets")) {
-        return PyErr_Format(PyExc_ValueError, "positions must be float32 triplets");
+        return Adopt(PyErr_Format(PyExc_ValueError, "positions must be float32 triplets"));
     }
 
     const auto count = static_cast<uint32_t>(pos_view->SizeBytes() / vec3_size);
@@ -150,13 +150,13 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     if (o_mass && o_mass != Py_None) {
         mass_view = BufferView::Acquire(o_mass);
         if (!mass_view) {
-            return nullptr;
+            return FailCurrent();
         }
         // Integer division on purpose: the hand written check compared
         // len / sizeof(float) against the count, so a short remainder still
         // passed. Preserved rather than tightened.
         if (mass_view->SizeBytes() / sizeof(float) != count) {
-            return PyErr_Format(PyExc_ValueError, "inv_masses length must match vertex count");
+            return Adopt(PyErr_Format(PyExc_ValueError, "inv_masses length must match vertex count"));
         }
     }
 
@@ -164,15 +164,15 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     if (o_vel && o_vel != Py_None) {
         vel_view = BufferView::Acquire(o_vel);
         if (!vel_view) {
-            return nullptr;
+            return FailCurrent();
         }
         if (vel_view->SizeBytes() / vec3_size != count) {
-            return PyErr_Format(PyExc_ValueError, "velocities length must match vertex count");
+            return Adopt(PyErr_Format(PyExc_ValueError, "velocities length must match vertex count"));
         }
     }
 
     // 2. Native packing (reserve-once and the zero-count early return are what
-    // joltc's AddVertices did and are preserved inside the native method).
+    // joltc's AddVertices did and are preserved inside the native method)).
     const std::span<const float> packed_positions =
         pos_view->Float32();
     const std::size_t float_count = pos_view->SizeBytes() / sizeof(float);
@@ -185,10 +185,10 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
                                 {masses.data(), masses.empty() ? 0 : vert_count},
                                 {velocities.data(), velocities.empty() ? 0 : vert_count * 3});
 
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
-[[nodiscard]] PyObject * SoftBodySharedSettingsAddFace(SoftBodySharedSettingsObject *self,
+[[nodiscard]] BoundResult SoftBodySharedSettingsAddFace(SoftBodySharedSettingsObject *self,
                                                        PyObject *const *args, size_t nargsf,
                                                        PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
@@ -201,30 +201,30 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
         self->parsers->sbssAddFace.Parse(args, nargs, kwnames, v1, v2, v3, mat_idx);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     if (self->settings->optimized()) {
         PyErr_SetString(PyExc_RuntimeError, kOptimizedMessageSingle);
-        return nullptr;
+        return FailCurrent();
     }
 
     const std::expected<void, Error> added = self->settings->AddFace(v1, v2, v3, mat_idx);
     if (!added) {
         if (added.error().Code().Is(SoftBodySettingsError::DegenerateFace)) {
             PyErr_SetString(PyExc_ValueError, "Face must have 3 distinct vertex indices");
-            return nullptr;
+            return FailCurrent();
         }
         // Out of range: the diagnostic spells out the indices and the total.
-        return PyErr_Format(PyExc_IndexError,
-                            "Face vertex index out of range (Indices: %u,%u,%u | Total: %u)", v1,
-                            v2, v3, self->settings->vertex_count());
+        return Adopt(PyErr_Format(PyExc_IndexError,
+                                  "Face vertex index out of range (Indices: %u,%u,%u | Total: %u)",
+                                  v1, v2, v3, self->settings->vertex_count()));
     }
 
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
-[[nodiscard]] PyObject * SoftBodySharedSettingsAddFaces(SoftBodySharedSettingsObject *self,
+[[nodiscard]] BoundResult SoftBodySharedSettingsAddFaces(SoftBodySharedSettingsObject *self,
                                                         PyObject *const *args, size_t nargsf,
                                                         PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
@@ -235,12 +235,12 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
         self->parsers->sbssAddFaces.Parse(args, nargs, kwnames, o_ind, o_mat);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     if (self->settings->optimized()) {
         PyErr_SetString(PyExc_RuntimeError, kOptimizedMessageSingle);
-        return nullptr;
+        return FailCurrent();
     }
 
     // 1. Index Buffer Acquisition
@@ -248,10 +248,10 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
 
     const auto ind_view = BufferView::Acquire(o_ind);
     if (!ind_view) {
-        return nullptr;
+        return FailCurrent();
     }
     if (!ind_view->RequireMultipleOf(triplet_size, "indices buffer must be uint32 triplets")) {
-        return nullptr;
+        return FailCurrent();
     }
 
     const std::span<const std::uint32_t> inds = ind_view->Uint32();
@@ -262,10 +262,10 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     if (o_mat && o_mat != Py_None) {
         mat_view = BufferView::Acquire(o_mat);
         if (!mat_view) {
-            return nullptr;
+            return FailCurrent();
         }
         if (mat_view->SizeBytes() / sizeof(uint32_t) != face_count) {
-            return PyErr_Format(PyExc_ValueError, "materials length must match face count");
+            return Adopt(PyErr_Format(PyExc_ValueError, "materials length must match face count"));
         }
     }
 
@@ -279,10 +279,10 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
         self->settings->AddFaces({inds.data(), index_count}, {mats.data(), mat_count}, &bad_face);
 
     if (!added) {
-        return PyErr_Format(PyExc_IndexError, "Face %u uses out-of-range vertex index", bad_face);
+        return Adopt(PyErr_Format(PyExc_IndexError, "Face %u uses out-of-range vertex index", bad_face));
     }
 
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
 // Method: settings.add_pinned_vertex(index) (METH_O)
@@ -304,12 +304,12 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
  * whoever owns the API; it is not a bug fix.
  */
 [[gnu::deprecated("Use add_vertices with inv_mass=0.0 instead")]]
-[[nodiscard]] PyObject *
+[[nodiscard]] BoundResult
 SoftBodySharedSettingsAddPinnedVertex(SoftBodySharedSettingsObject *self, PyObject *arg) {
     // 1. Validate the argument type so we don't break existing logic flows
     const auto index_raw = PyLong_AsLong(arg);
     if (PyErr_Occurred()) {
-        return nullptr;
+        return FailCurrent();
     }
 
     // 2. Issue a Python-level DeprecationWarning
@@ -320,17 +320,17 @@ SoftBodySharedSettingsAddPinnedVertex(SoftBodySharedSettingsObject *self, PyObje
                                          1);
 
     if (warn_status < 0) {
-        return nullptr; // User has warnings-as-errors enabled
+        return FailCurrent(); // User has warnings-as-errors enabled
     }
 
     // 3. Safety Check: Still perform bounds checking to help users debug their indices
     if (index_raw < 0 || static_cast<uint32_t>(index_raw) >= self->settings->vertex_count()) {
         PyErr_SetString(PyExc_IndexError, "Vertex index out of range");
-        return nullptr;
+        return FailCurrent();
     }
 
     // 4. Return None without modifying Jolt state
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
 [[gnu::const]]
@@ -339,7 +339,7 @@ static inline bool CheckBendType(int val, int max) {
 }
 
 // Method: settings.create_constraints(compliance, bend_type=1)
-[[nodiscard]] PyObject *
+[[nodiscard]] BoundResult
 SoftBodySharedSettingsCreateConstraints(SoftBodySharedSettingsObject *self, PyObject *const *args,
                                         size_t nargsf, PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
@@ -350,48 +350,48 @@ SoftBodySharedSettingsCreateConstraints(SoftBodySharedSettingsObject *self, PyOb
         self->parsers->sbssCreateConstraints.Parse(args, nargs, kwnames, compliance, bend_type);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
     if (!CheckBendType(bend_type, 3)) {
         PyErr_Format(PyExc_ValueError,
                      "bend_type must be 0 (None), 1 (Distance), or 2 (Dihedral), got %d",
                      bend_type);
-        return nullptr;
+        return FailCurrent();
     }
 
     const std::expected<void, Error> created =
         self->settings->CreateConstraints(compliance, bend_type);
     if (!created) {
         PyErr_SetString(PyExc_RuntimeError, "create_constraints already called");
-        return nullptr;
+        return FailCurrent();
     }
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
 // Method: settings.optimize() (METH_NOARGS)
-[[nodiscard]] PyObject * SoftBodySharedSettingsOptimize(SoftBodySharedSettingsObject *self,
+[[nodiscard]] BoundResult SoftBodySharedSettingsOptimize(SoftBodySharedSettingsObject *self,
                                                         [[maybe_unused]] PyObject *args) {
     const std::expected<void, Error> optimized = self->settings->Optimize();
     if (!optimized) {
         PyErr_SetString(PyExc_RuntimeError,
                         "create_constraints must be called before optimize");
-        return nullptr;
+        return FailCurrent();
     }
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
 // Method: settings.get_vertex_position(index) (METH_O) - Returns REST pose
-[[nodiscard]] PyObject *
+[[nodiscard]] BoundResult
 SoftBodySharedSettingsGetVertexPosition(SoftBodySharedSettingsObject *self, PyObject *arg) {
     const auto index_raw = PyLong_AsLong(arg);
     if (PyErr_Occurred()) {
-        return nullptr;
+        return FailCurrent();
     }
 
     // Safety: check vertex count using the updated API
     if (index_raw < 0 || static_cast<uint32_t>(index_raw) >= self->settings->vertex_count()) {
         PyErr_SetString(PyExc_IndexError, "Vertex index out of range");
-        return nullptr;
+        return FailCurrent();
     }
 
     const std::expected<JPH::Float3, Error> vertex =
@@ -401,11 +401,11 @@ SoftBodySharedSettingsGetVertexPosition(SoftBodySharedSettingsObject *self, PyOb
         // because joltc's GetVertex could return false and the diagnostic has
         // to stay reachable for tests/test_diagnostics.py.
         PyErr_SetString(PyExc_RuntimeError, "Failed to retrieve vertex data from Jolt");
-        return nullptr;
+        return FailCurrent();
     }
 
     // Return only the position component as requested
-    return BuildTuple(vertex->x, vertex->y, vertex->z);
+    return Adopt(BuildTuple(vertex->x, vertex->y, vertex->z));
 }
 
 // The legacy entry remains available for compatibility; its implementation
@@ -419,14 +419,14 @@ SoftBodySharedSettingsGetVertexPosition(SoftBodySharedSettingsObject *self, PyOb
 #endif
 static PyMethodDef kSoftBodySharedSettingsMethods[] = {
 
-    CPH::Python::FastCallMethod("add_vertex", SoftBodySharedSettingsAddVertex),
-    CPH::Python::FastCallMethod("add_vertices", SoftBodySharedSettingsAddVertices),
-    CPH::Python::OneArgMethod("add_pinned_vertex", SoftBodySharedSettingsAddPinnedVertex),
-    CPH::Python::OneArgMethod("get_vertex_position", SoftBodySharedSettingsGetVertexPosition),
-    CPH::Python::FastCallMethod("add_face", SoftBodySharedSettingsAddFace),
-    CPH::Python::FastCallMethod("add_faces", SoftBodySharedSettingsAddFaces),
-    CPH::Python::FastCallMethod("create_constraints", SoftBodySharedSettingsCreateConstraints),
-    CPH::Python::NoArgsMethod("optimize", SoftBodySharedSettingsOptimize),
+    CPH::Python::Method<&SoftBodySharedSettingsAddVertex>("add_vertex"),
+    CPH::Python::Method<&SoftBodySharedSettingsAddVertices>("add_vertices"),
+    CPH::Python::OneArgMethod<&SoftBodySharedSettingsAddPinnedVertex>("add_pinned_vertex"),
+    CPH::Python::OneArgMethod<&SoftBodySharedSettingsGetVertexPosition>("get_vertex_position"),
+    CPH::Python::Method<&SoftBodySharedSettingsAddFace>("add_face"),
+    CPH::Python::Method<&SoftBodySharedSettingsAddFaces>("add_faces"),
+    CPH::Python::Method<&SoftBodySharedSettingsCreateConstraints>("create_constraints"),
+    CPH::Python::NoArgsMethod<&SoftBodySharedSettingsOptimize>("optimize"),
     {nullptr, nullptr, 0, nullptr}};
 #if defined(__clang__)
 #    pragma clang diagnostic pop

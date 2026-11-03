@@ -62,7 +62,7 @@ static void DumpParserCatalog(ParserCore *const *const parsers, const size_t cou
  * PyCFunction: dump_schema
  * Constructs each self-describing parser group, dumps their schemas to one JSON, and cleans up.
  */
-[[nodiscard]] static PyObject * ModuleDumpSchemaJson(PyObject *const self, PyObject *const *args,
+[[nodiscard]] static BoundResult ModuleDumpSchemaJson(PyObject *const self, PyObject *const *args,
                                                       size_t nargsf, PyObject *kwnames) {
     const auto st        = GetModuleState(self);
     const char *filename = "culverin_schema.json";
@@ -73,12 +73,12 @@ static void DumpParserCatalog(ParserCore *const *const parsers, const size_t cou
         st->parsers->dumpSchema.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, filename);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     FILE *const f = fopen(filename, "w");
     if (f == nullptr) {
-        return PyErr_SetFromErrno(PyExc_IOError);
+        return Adopt(PyErr_SetFromErrno(PyExc_IOError));
     }
 
     // 2. Construct temporary parser groups. Each parser initializes itself and
@@ -121,11 +121,11 @@ static void DumpParserCatalog(ParserCore *const *const parsers, const size_t cou
 
     // 4. Cleanup temporary allocations
 
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
 
-[[nodiscard]] static PyObject * ModuleMutateTuple([[maybe_unused]] PyObject *self,
+[[nodiscard]] static BoundResult ModuleMutateTuple([[maybe_unused]] PyObject *self,
                                                    PyObject *const *args, Py_ssize_t nargsf) {
     constexpr Py_ssize_t kArg0 = 0;
     constexpr Py_ssize_t kArg1 = 1;
@@ -151,19 +151,19 @@ static void DumpParserCatalog(ParserCore *const *const parsers, const size_t cou
     // --- 2. PRE-FLIGHT CHECKS ---
     if (nargs != kMinArgs && nargs != kMaxArgs) {
         PyErr_Format(PyExc_TypeError, "mutate_tuple() takes 3 or 5 arguments (%zd given)", nargs);
-        return nullptr;
+        return FailCurrent();
     }
 
     target  = args[kArg0];
     new_val = args[kArg2];
     if (!PyTuple_Check(target)) {
         PyErr_SetString(PyExc_TypeError, "arg 0 must be a tuple");
-        return nullptr;
+        return FailCurrent();
     }
 
     index = PyLong_AsSsize_t(args[kArg1]);
     if (index == -1 && PyErr_Occurred()) {
-        return nullptr;
+        return FailCurrent();
     }
 
     Py_ssize_t tuple_len = Py_SIZE(target);
@@ -172,7 +172,7 @@ static void DumpParserCatalog(ParserCore *const *const parsers, const size_t cou
     }
     if (index < 0 || index >= tuple_len) {
         PyErr_Format(PyExc_IndexError, "tuple index %zd out of range", index);
-        return nullptr;
+        return FailCurrent();
     }
 
     if (nargs == kMaxArgs) {
@@ -180,7 +180,7 @@ static void DumpParserCatalog(ParserCore *const *const parsers, const size_t cou
         key      = args[kArg4];
         if (!PyDict_Check(registry)) {
             PyErr_SetString(PyExc_TypeError, "arg 3 must be a dict");
-            return nullptr;
+            return FailCurrent();
         }
     }
 
@@ -264,9 +264,9 @@ exit_critical:
 #endif
 
     if (!success) {
-        return nullptr;
+        return FailCurrent();
     }
-    return PyLong_FromSsize_t(final_hash);
+    return Adopt(PyLong_FromSsize_t(final_hash));
 }
 
 // --- The Documentation System ---
@@ -760,8 +760,8 @@ static void culverin_free(void *module) {
 
 static PyMethodDef kModuleMethods[] = {
 
-    CPH::Python::FastCallMethod("_dump_schema_json", ModuleDumpSchemaJson),
-    CPH::Python::FastCallMethod("mutate_tuple", ModuleMutateTuple),
+    CPH::Python::Method<&ModuleDumpSchemaJson>("_dump_schema_json"),
+    CPH::Python::Method<&ModuleMutateTuple>("mutate_tuple"),
     {nullptr, nullptr, 0, nullptr}};
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)

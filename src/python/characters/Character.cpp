@@ -16,12 +16,13 @@
 #include "physics/PhysicsSync.hpp"
 #include <Jolt/Math/Math.h>
 #include <cmath>
+#include "bindings/Result.hpp"
 
 namespace CPH::Python {
 
 // --- Move --------------------------------------------------------------------
 
-[[nodiscard]] PyObject *CharacterMove(CharacterObject *self, PyObject *const *args, size_t nargsf,
+[[nodiscard]] BoundResult CharacterMove(CharacterObject *self, PyObject *const *args, size_t nargsf,
                                       PyObject *kwnames) {
     JPH::Float3 v_in{0.0f, 0.0f, 0.0f};
     float dt = 0.0f;
@@ -30,11 +31,11 @@ namespace CPH::Python {
         self->parsers->charMove.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v_in, dt);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     if (!ValidateFinite("Character velocity", v_in.x, v_in.y, v_in.z)) {
-        return nullptr;
+        return FailCurrent();
     }
 
     // The GIL is dropped for the call: the native move parks on the step-sync
@@ -45,12 +46,12 @@ namespace CPH::Python {
     self->character->Move(v_in.x, v_in.y, v_in.z, dt);
     }
 
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
 // --- Transforms --------------------------------------------------------------
 
-[[nodiscard]] PyObject *CharacterGetPosition(CharacterObject *self,
+[[nodiscard]] BoundResult CharacterGetPosition(CharacterObject *self,
                                              PyObject *ignored [[maybe_unused]]) {
     const JPH::RVec3 position = self->character->GetPosition();
 
@@ -63,16 +64,16 @@ namespace CPH::Python {
     //
     // RVec3 carries the full precision the world was built with, and BuildTuple
     // dispatches double to PyFloat_FromDouble without narrowing.
-    return BuildTuple(position.GetX(), position.GetY(), position.GetZ());
+    return Adopt(BuildTuple(position.GetX(), position.GetY(), position.GetZ()));
 }
 
-[[nodiscard]] PyObject *CharacterGetLinearVelocity(CharacterObject *self,
+[[nodiscard]] BoundResult CharacterGetLinearVelocity(CharacterObject *self,
                                                    PyObject *ignored [[maybe_unused]]) {
     const JPH::Vec3 velocity = self->character->GetLinearVelocity();
-    return BuildTuple(velocity.GetX(), velocity.GetY(), velocity.GetZ());
+    return Adopt(BuildTuple(velocity.GetX(), velocity.GetY(), velocity.GetZ()));
 }
 
-[[nodiscard]] PyObject *CharacterSetPosition(CharacterObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult CharacterSetPosition(CharacterObject *self, PyObject *const *args,
                                              size_t nargsf, PyObject *kwnames) {
     PosStride pos = {};
 
@@ -80,7 +81,7 @@ namespace CPH::Python {
         self->parsers->setPosChar.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, pos);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     {
@@ -88,10 +89,10 @@ namespace CPH::Python {
     self->character->SetPosition(JPH::RVec3(pos.x, pos.y, pos.z));
     }
 
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
-[[nodiscard]] PyObject *CharacterSetRotation(CharacterObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult CharacterSetRotation(CharacterObject *self, PyObject *const *args,
                                              size_t nargsf, PyObject *kwnames) {
     AuxStride rot = {.x = 0.0f, .y = 0.0f, .z = 0.0f, .w = 1.0f};
 
@@ -99,7 +100,7 @@ namespace CPH::Python {
         self->parsers->setRotChar.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, rot);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     {
@@ -107,10 +108,10 @@ namespace CPH::Python {
     self->character->SetRotation(JPH::Quat(rot.x, rot.y, rot.z, rot.w));
     }
 
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
-[[nodiscard]] PyObject *CharacterSetStrength(CharacterObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult CharacterSetStrength(CharacterObject *self, PyObject *const *args,
                                              size_t nargsf, PyObject *kwnames) {
     float strength = 0.0f;
 
@@ -118,7 +119,7 @@ namespace CPH::Python {
         self->parsers->setStrengthChar.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, strength);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     {
@@ -126,15 +127,15 @@ namespace CPH::Python {
     self->character->SetStrength(strength);
     }
 
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
 // Interpolates between the previous and current shadowed transform. Pure
 // wrapping: the interpolation itself is MathInterpolateCharacterTransform.
-[[nodiscard]] PyObject *CharacterGetRenderTransform(CharacterObject *self, PyObject *arg) {
+[[nodiscard]] BoundResult CharacterGetRenderTransform(CharacterObject *self, PyObject *arg) {
     const auto alpha_raw = PyFloat_AsDouble(arg);
     if (alpha_raw == -1.0 && PyErr_Occurred()) {
-        return nullptr;
+        return FailCurrent();
     }
 
     constexpr float kMinAlpha = 0.0f;
@@ -160,21 +161,21 @@ namespace CPH::Python {
         MathInterpolateCharacterTransform(prev_p, prev_r, end_p, end_r, alpha, result_p, result_r);
     }
 
-    return BuildTuple(BuildTuple(result_p[0], result_p[1], result_p[2]),
-                      BuildTuple(result_r[0], result_r[1], result_r[2], result_r[3]));
+    return Adopt(BuildTuple(BuildTuple(result_p[0], result_p[1], result_p[2]),
+                            BuildTuple(result_r[0], result_r[1], result_r[2], result_r[3])));
 }
 
-[[nodiscard]] PyObject *CharacterIsGrounded(CharacterObject *self,
+[[nodiscard]] BoundResult CharacterIsGrounded(CharacterObject *self,
                                             PyObject *ignored [[maybe_unused]]) {
     if (self->character->IsGrounded()) {
-        Py_RETURN_TRUE;
+        return BorrowedValue(Py_True);
     }
-    Py_RETURN_FALSE;
+    return BorrowedValue(Py_False);
 }
 
-[[nodiscard]] PyObject *CharacterGetHandle(CharacterObject *self,
+[[nodiscard]] BoundResult CharacterGetHandle(CharacterObject *self,
                                            [[maybe_unused]] void *closure) {
-    return BuildValue(self->character->Handle());
+    return Adopt(BuildValue(self->character->Handle()));
 }
 
 // --- Object lifecycle --------------------------------------------------------
@@ -184,7 +185,7 @@ namespace CPH::Python {
 
 // --- Creation ----------------------------------------------------------------
 
-[[nodiscard]] PyObject *WorldCreateCharacter(PhysicsWorldObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult WorldCreateCharacter(PhysicsWorldObject *self, PyObject *const *args,
                                              size_t nargsf, PyObject *kwnames) {
     PosStride pos = {};
     float height  = 1.8f;
@@ -197,7 +198,7 @@ namespace CPH::Python {
                                                                step_h, slope);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     const CPH::CharacterParams params{.height = height, .radius = radius, .maxSlope = slope};
@@ -212,21 +213,21 @@ namespace CPH::Python {
     if (!character) {
         // Either the capsule shape failed or the world could not grow. Both
         // have always surfaced as a bare MemoryError here.
-        return PyErr_NoMemory();
+        return Adopt(PyErr_NoMemory());
     }
 
     auto *obj = CharacterObject::New(
         reinterpret_cast<PyTypeObject *>(GetModuleState(PyType_GetModule(Py_TYPE(self)))
                                              ->characterType));
     if (!obj) {
-        return nullptr;
+        return FailCurrent();
     }
 
     obj->parsers = CPH::Python::NewParserGroup<CPH::Python::CharacterParsers>();
     if (!obj->parsers) {
         Py_DECREF(obj);
         PyErr_NoMemory();
-        return nullptr;
+        return FailCurrent();
     }
 
     obj->world     = reinterpret_cast<PhysicsWorldObject *>(Py_NewRef(self));
@@ -237,23 +238,23 @@ namespace CPH::Python {
     self->viewShape[0] =
         static_cast<Py_ssize_t>(self->physics.count.load(std::memory_order::relaxed));
 
-    return obj->Publish();
+    return Adopt(obj->Publish());
 }
 
 static PyMethodDef kCharacterMethods[] = {
 
-    CPH::Python::FastCallMethod("move", CharacterMove),
-    CPH::Python::NoArgsMethod("get_position", CharacterGetPosition),
-    CPH::Python::NoArgsMethod("get_linear_velocity", CharacterGetLinearVelocity),
-    CPH::Python::FastCallMethod("set_position", CharacterSetPosition),
-    CPH::Python::FastCallMethod("set_rotation", CharacterSetRotation),
-    CPH::Python::NoArgsMethod("is_grounded", CharacterIsGrounded),
-    CPH::Python::FastCallMethod("set_strength", CharacterSetStrength),
-    CPH::Python::OneArgMethod("get_render_transform", CharacterGetRenderTransform),
+    CPH::Python::Method<&CharacterMove>("move"),
+    CPH::Python::NoArgsMethod<&CharacterGetPosition>("get_position"),
+    CPH::Python::NoArgsMethod<&CharacterGetLinearVelocity>("get_linear_velocity"),
+    CPH::Python::Method<&CharacterSetPosition>("set_position"),
+    CPH::Python::Method<&CharacterSetRotation>("set_rotation"),
+    CPH::Python::NoArgsMethod<&CharacterIsGrounded>("is_grounded"),
+    CPH::Python::Method<&CharacterSetStrength>("set_strength"),
+    CPH::Python::OneArgMethod<&CharacterGetRenderTransform>("get_render_transform"),
     {nullptr, nullptr, 0, nullptr}};
 
 static PyGetSetDef CharacterGetSets[] = {
-    CPH::Python::GetSet("handle", CharacterGetHandle),
+    CPH::Python::GetSet<&CharacterGetHandle>("handle"),
     {},
 };
 

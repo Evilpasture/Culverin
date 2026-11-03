@@ -3,26 +3,27 @@
 #include "physics/PhysicsWorldBinding.hpp"
 #include "physics/Query.hpp"
 #include <Python.h>
+#include "bindings/Result.hpp"
 
 namespace CPH::Python {
 
-[[nodiscard]] PyObject * WorldOverlapSphere(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldOverlapSphere(PhysicsWorldObject *self,
                                                               PyObject *const *args, size_t nargsf,
                                                               PyObject *kwnames);
 
-[[nodiscard]] PyObject * WorldOverlapAabb(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldOverlapAabb(PhysicsWorldObject *self,
                                                             PyObject *const *args, size_t nargsf,
                                                             PyObject *kwnames);
 
-[[nodiscard]] PyObject * WorldRaycast(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldRaycast(PhysicsWorldObject *self,
                                                         PyObject *const *args, size_t nargsf,
                                                         PyObject *kwnames);
 
-[[nodiscard]] PyObject * WorldRaycastBatch(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldRaycastBatch(PhysicsWorldObject *self,
                                                              PyObject *const *args, size_t nargsf,
                                                              PyObject *kwnames);
 
-[[nodiscard]] PyObject * WorldShapecast(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldShapecast(PhysicsWorldObject *self,
                                                           PyObject *const *args, size_t nargsf,
                                                           PyObject *kwnames);
 

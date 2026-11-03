@@ -2,6 +2,8 @@
 
 #include <Python.h>
 
+#include "bindings/Result.hpp"
+
 #include <cstddef>
 #include <limits>
 #include <string_view>
@@ -11,35 +13,6 @@ namespace CPH::Python {
 namespace detail {
 
 template <typename> inline constexpr bool kUnsupportedValue = false;
-
-template <typename Function> struct FastCallMethodTraits {
-    static constexpr bool is_valid = false;
-    static constexpr int flags     = 0;
-};
-template <typename Self, typename ArgCount>
-struct FastCallMethodTraits<PyObject *(*)(Self *, PyObject *const *, ArgCount)> {
-    static constexpr bool is_valid = std::is_integral_v<ArgCount>;
-    static constexpr int flags     = METH_FASTCALL;
-};
-template <typename Self, typename ArgCount>
-struct FastCallMethodTraits<PyObject *(*)(Self *, PyObject *const *, ArgCount, PyObject *)> {
-    static constexpr bool is_valid = std::is_integral_v<ArgCount>;
-    static constexpr int flags     = METH_FASTCALL | METH_KEYWORDS;
-};
-
-// A thunk is the fixed METH_FASTCALL|METH_KEYWORDS shape, templated on its
-// self type so it can take the concrete binding object.
-template <typename Function> struct IsThunkFunction : std::false_type {};
-template <typename Self>
-struct IsThunkFunction<PyObject *(*)(Self *, PyObject *const *, size_t, PyObject *)>
-    : std::true_type {};
-
-template <typename Function> struct IsSimpleMethodFunction : std::false_type {};
-template <typename Self>
-struct IsSimpleMethodFunction<PyObject *(*)(Self *, PyObject *)> : std::true_type {};
-
-template <typename Function> struct IsGetterFunction : std::false_type {};
-template <typename Self> struct IsGetterFunction<PyObject *(*)(Self *, void *)> : std::true_type {};
 
 [[nodiscard]] inline PyObject *MakeName(std::string_view name) noexcept {
     if (name.size() > static_cast<std::size_t>(std::numeric_limits<Py_ssize_t>::max())) {
@@ -64,6 +37,87 @@ template <typename T> [[nodiscard]] inline T ConvertValue(PyObject *obj) noexcep
         static_assert(kUnsupportedValue<T>, "Unsupported Python value conversion");
     }
 }
+
+// --- Registration: the compile-time gate -------------------------------------
+//
+// Every Python-facing implementation returns CPH::Python::BoundResult. These
+// thunks adapt one implementation shape to the C function pointer CPython
+// expects and wrap the call in Bridge(), so the two error channels are written
+// together in exactly one place.
+//
+// A function that still returns `PyObject *` -- one that manages the error
+// indicator by hand -- has no thunk, so registering it does not compile. That is
+// the point: a method whose failure convention is implicit is not something you
+// can forget to handle, it is something the compiler will not let you express.
+template <typename Signature> struct BoundThunkKind {
+    static constexpr bool is_valid = false;
+};
+
+// METH_FASTCALL, with or without keywords.
+template <typename Self, typename ArgCount>
+struct BoundThunkKind<BoundResult (*)(Self *, PyObject *const *, ArgCount)> {
+    static constexpr bool is_valid = true;
+    static constexpr int flags     = METH_FASTCALL;
+
+    template <auto Impl>
+    static PyObject *Call(Self *self, PyObject *const *args, ArgCount nargsf) noexcept {
+        return Bridge([&]() -> BoundResult { return Impl(self, args, nargsf); });
+    }
+};
+template <typename Self, typename ArgCount>
+struct BoundThunkKind<BoundResult (*)(Self *, PyObject *const *, ArgCount, PyObject *)> {
+    static constexpr bool is_valid = true;
+    static constexpr int flags     = METH_FASTCALL | METH_KEYWORDS;
+
+    template <auto Impl>
+    static PyObject *Call(Self *self, PyObject *const *args, ArgCount nargsf,
+                          PyObject *kwnames) noexcept {
+        return Bridge([&]() -> BoundResult { return Impl(self, args, nargsf, kwnames); });
+    }
+};
+
+// (self, argument) -- the shape shared by METH_O and METH_NOARGS, which differ
+// only in the flag the table entry carries.
+template <typename Self> struct SimpleThunkKind {
+    static constexpr bool is_valid = false;
+};
+template <typename Self>
+struct SimpleThunkKind<BoundResult (*)(Self *, PyObject *)> {
+    static constexpr bool is_valid = true;
+
+    template <auto Impl>
+    static PyObject *Call(Self *self, PyObject *arg) noexcept {
+        return Bridge([&]() -> BoundResult { return Impl(self, arg); });
+    }
+};
+
+// tp_new: (type, args, kwds) -> a new reference to a fresh instance.
+template <typename Signature> struct NewThunkKind {
+    static constexpr bool is_valid = false;
+};
+template <>
+struct NewThunkKind<BoundResult (*)(PyTypeObject *, PyObject *, PyObject *)> {
+    static constexpr bool is_valid = true;
+
+    template <auto Impl>
+    static PyObject *Call(PyTypeObject *type, PyObject *args, PyObject *kwds) noexcept {
+        return Bridge([&]() -> BoundResult { return Impl(type, args, kwds); });
+    }
+};
+
+// Getters share the (self, closure) shape.
+template <typename Self> struct GetterThunkKind {
+    static constexpr bool is_valid = false;
+};
+template <typename Self>
+struct GetterThunkKind<BoundResult (*)(Self *, void *)> {
+    static constexpr bool is_valid = true;
+
+    template <auto Impl>
+    static PyObject *Call(Self *self, void *closure) noexcept {
+        return Bridge([&]() -> BoundResult { return Impl(self, closure); });
+    }
+};
 
 } // namespace detail
 
@@ -137,60 +191,94 @@ template <typename T>
     return default_value;
 }
 
-template <typename Function>
-[[nodiscard]] constexpr PyMethodDef FastCallMethod(const char *name, Function function) noexcept {
-    using Traits = detail::FastCallMethodTraits<Function>;
-    static_assert(Traits::is_valid,
-                  "FastCallMethod requires (self, args, nargsf[, kwnames]) handler");
-    return {.ml_name  = name,
-            .ml_meth  = _PyCFunction_CAST(function),
-            .ml_flags = Traits::flags,
-            .ml_doc   = nullptr};
+// --- Method table entries -----------------------------------------------------
+//
+// The implementation is the template argument, not a function argument, so its
+// exact type is visible here and can be checked. `Method` covers both fastcall
+// shapes and picks METH_KEYWORDS from the signature; `NoArgsMethod` and
+// `OneArgMethod` cover the two-argument shape, where only the table knows
+// whether CPython will pass an argument at all.
+
+template <auto Impl>
+[[nodiscard]] constexpr PyMethodDef Method(const char *name) noexcept {
+    using Thunk = detail::BoundThunkKind<decltype(Impl)>;
+    if constexpr (!Thunk::is_valid) {
+        static_assert(Thunk::is_valid,
+                      "CPH::Python::Method<&Impl> requires an implementation returning "
+                      "CPH::Python::BoundResult; see bindings/Result.hpp");
+        return {};
+    } else {
+        return {.ml_name  = name,
+                .ml_meth  = _PyCFunction_CAST(&Thunk::template Call<Impl>),
+                .ml_flags = Thunk::flags,
+                .ml_doc   = nullptr};
+    }
 }
 
-// A table entry built straight from a thunk instantiation. The signature is
-// the fixed METH_FASTCALL|METH_KEYWORDS one, so unlike FastCallMethod there is
-// nothing to deduce; the point is to let a family of adapters exist as one
-// template rather than one named function per method.
-template <auto ThunkFn>
-[[nodiscard]] constexpr PyMethodDef MakeThunkMethod(const char *name) noexcept {
-    static_assert(detail::IsThunkFunction<decltype(ThunkFn)>::value,
-                  "MakeThunkMethod requires a (self, args, nargsf, kwnames) thunk");
-    return {.ml_name  = name,
-            .ml_meth  = _PyCFunction_CAST(ThunkFn),
-            .ml_flags = METH_FASTCALL | METH_KEYWORDS,
-            .ml_doc   = nullptr};
+template <auto Impl>
+[[nodiscard]] constexpr PyMethodDef NoArgsMethod(const char *name) noexcept {
+    using Thunk = detail::SimpleThunkKind<decltype(Impl)>;
+    if constexpr (!Thunk::is_valid) {
+        static_assert(Thunk::is_valid,
+                      "CPH::Python::NoArgsMethod<&Impl> requires a (self, ignored) implementation "
+                      "returning CPH::Python::BoundResult; see bindings/Result.hpp");
+        return {};
+    } else {
+        return {.ml_name  = name,
+                .ml_meth  = _PyCFunction_CAST(&Thunk::template Call<Impl>),
+                .ml_flags = METH_NOARGS,
+                .ml_doc   = nullptr};
+    }
 }
 
-template <typename Function>
-[[nodiscard]] constexpr PyMethodDef NoArgsMethod(const char *name, Function function) noexcept {
-    static_assert(detail::IsSimpleMethodFunction<Function>::value,
-                  "NoArgsMethod requires a (self, ignored) handler");
-    return {.ml_name  = name,
-            .ml_meth  = _PyCFunction_CAST(function),
-            .ml_flags = METH_NOARGS,
-            .ml_doc   = nullptr};
+template <auto Impl>
+[[nodiscard]] constexpr PyMethodDef OneArgMethod(const char *name) noexcept {
+    using Thunk = detail::SimpleThunkKind<decltype(Impl)>;
+    if constexpr (!Thunk::is_valid) {
+        static_assert(Thunk::is_valid,
+                      "CPH::Python::OneArgMethod<&Impl> requires a (self, arg) implementation "
+                      "returning CPH::Python::BoundResult; see bindings/Result.hpp");
+        return {};
+    } else {
+        return {.ml_name  = name,
+                .ml_meth  = _PyCFunction_CAST(&Thunk::template Call<Impl>),
+                .ml_flags = METH_O,
+                .ml_doc   = nullptr};
+    }
 }
 
-template <typename Function>
-[[nodiscard]] constexpr PyMethodDef OneArgMethod(const char *name, Function function) noexcept {
-    static_assert(detail::IsSimpleMethodFunction<Function>::value,
-                  "OneArgMethod requires a (self, arg) handler");
-    return {.ml_name  = name,
-            .ml_meth  = _PyCFunction_CAST(function),
-            .ml_flags = METH_O,
-            .ml_doc   = nullptr};
+template <auto Impl>
+[[nodiscard]] constexpr PyGetSetDef GetSet(const char *name) noexcept {
+    using Thunk = detail::GetterThunkKind<decltype(Impl)>;
+    if constexpr (!Thunk::is_valid) {
+        static_assert(Thunk::is_valid,
+                      "CPH::Python::GetSet<&Impl> requires a (self, closure) getter returning "
+                      "CPH::Python::BoundResult; see bindings/Result.hpp");
+        return {};
+    } else {
+        return {.name    = name,
+                .get     = _Py_CAST(getter, _Py_CAST(void (*)(void), &Thunk::template Call<Impl>)),
+                .set     = nullptr,
+                .doc     = nullptr,
+                .closure = nullptr};
+    }
 }
 
-template <typename Function>
-[[nodiscard]] constexpr PyGetSetDef GetSet(const char *name, Function function) noexcept {
-    static_assert(detail::IsGetterFunction<Function>::value,
-                  "GetSet requires a (self, closure) getter");
-    return {.name    = name,
-            .get     = _Py_CAST(getter, _Py_CAST(void (*)(void), function)),
-            .set     = nullptr,
-            .doc     = nullptr,
-            .closure = nullptr};
+// tp_new is a slot rather than a table entry, so it gets its own builder: the
+// allocation path is where "returned NULL without setting an exception" used to
+// live, and it is gated the same way.
+template <auto Impl>
+[[nodiscard]] constexpr PyType_Slot NewSlot() noexcept {
+    using Thunk = detail::NewThunkKind<decltype(Impl)>;
+    if constexpr (!Thunk::is_valid) {
+        static_assert(Thunk::is_valid,
+                      "CPH::Python::NewSlot<&Impl> requires a (type, args, kwds) implementation "
+                      "returning CPH::Python::BoundResult; see bindings/Result.hpp");
+        return {};
+    } else {
+        return {.slot  = Py_tp_new,
+                .pfunc = _Py_CAST(void *, &Thunk::template Call<Impl>)};
+    }
 }
 
 extern PyType_Spec WorldSpec;

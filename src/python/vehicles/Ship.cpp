@@ -11,10 +11,11 @@
 #include "bindings/PythonSupport.hpp"
 #include "physics/PhysicsSync.hpp"
 #include <mutex>
+#include "bindings/Result.hpp"
 
 namespace CPH::Python {
 
-[[nodiscard]] PyObject * WorldCreateShip(PhysicsWorldObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult WorldCreateShip(PhysicsWorldObject *self, PyObject *const *args,
                                           size_t nargsf, PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
     uint64_t sled_raw      = 0;
@@ -30,7 +31,7 @@ namespace CPH::Python {
         args, nargs, kwnames, sled_raw, kp, kd, throttle, steer, banking, grip, drag);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     // Pending commands have to be applied before the sled handle can resolve.
@@ -55,20 +56,20 @@ namespace CPH::Python {
     }
 
     if (!ship) {
-        return PyErr_Format(PyExc_ValueError, "Invalid sled handle.");
+        return Adopt(PyErr_Format(PyExc_ValueError, "Invalid sled handle."));
     }
 
     ModuleState *st = GetModuleState(PyType_GetModule(Py_TYPE(self)));
     auto *obj = ShipObject::New(reinterpret_cast<PyTypeObject *>(st->shipType));
     if (!obj) {
-        return nullptr;
+        return FailCurrent();
     }
 
     obj->parsers = CPH::Python::NewParserGroup<CPH::Python::ShipParsers>();
     if (!obj->parsers) {
         Py_DECREF(obj);
         PyErr_NoMemory();
-        return nullptr;
+        return FailCurrent();
     }
 
     obj->world = reinterpret_cast<PhysicsWorldObject *>(Py_NewRef(self));
@@ -77,10 +78,10 @@ namespace CPH::Python {
     // that order.
     obj->ship = ship.release();
 
-    return obj->Publish();
+    return Adopt(obj->Publish());
 }
 
-[[nodiscard]] PyObject * ShipSetInput(ShipObject *self, PyObject *const *args, size_t nargsf,
+[[nodiscard]] BoundResult ShipSetInput(ShipObject *self, PyObject *const *args, size_t nargsf,
                                        PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
     float fwd              = 0.0f;
@@ -89,20 +90,20 @@ namespace CPH::Python {
     const ParseResult parsed = self->parsers->shipInput.Parse(args, nargs, kwnames, fwd, right);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     // No locks and no GIL assumptions: the listener running in the physics
     // step picks these up from the atomics.
     self->ship->SetInput(fwd, right);
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
 // dealloc, traverse and clear all come from PyGcObject; ShipBinding.hpp says
 // what they act on. In particular BeforeClear() destroys the ship *before* the
 // world reference is dropped, which the hand-written tp_clear did not.
 
-static PyMethodDef kShipMethods[] = {CPH::Python::FastCallMethod("set_input", ShipSetInput),
+static PyMethodDef kShipMethods[] = {CPH::Python::Method<&ShipSetInput>("set_input"),
                                      {nullptr, nullptr, 0, nullptr}};
 
 static PyType_Slot ShipSlots[] = {

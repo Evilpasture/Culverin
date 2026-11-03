@@ -1,23 +1,24 @@
 #pragma once
 #include "physics/PhysicsWorldBinding.hpp"
 #include <Python.h>
+#include "bindings/Result.hpp"
 
 namespace CPH::Python {
 
-[[nodiscard]] PyObject * WorldCreateConstraint(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldCreateConstraint(PhysicsWorldObject *self,
                                                                  PyObject *const *args,
                                                                  size_t nargsf, PyObject *kwnames);
 
-[[nodiscard]] PyObject * WorldDestroyConstraint(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldDestroyConstraint(PhysicsWorldObject *self,
                                                                   PyObject *const *args,
                                                                   size_t nargsf, PyObject *kwnames);
 
-[[nodiscard]] PyObject * WorldSetConstraintTarget(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldSetConstraintTarget(PhysicsWorldObject *self,
                                                                     PyObject *const *args,
                                                                     size_t nargsf,
                                                                     PyObject *kwnames);
 
-[[nodiscard]] PyObject * WorldGetConstraintType(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetConstraintType(PhysicsWorldObject *self,
                                                                   PyObject *const *args,
                                                                   size_t nargsf, PyObject *kwnames);
 

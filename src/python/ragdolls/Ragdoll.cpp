@@ -14,6 +14,7 @@
 #include "physics/PhysicsSync.hpp"
 
 #include <cstdint>
+#include "bindings/Result.hpp"
 
 namespace CPH::Python {
 
@@ -24,7 +25,7 @@ static constexpr float kRagdollDefaultPartMass = 10.0f;
 static constexpr float kRagdollDefaultTwistMin = -0.1f;
 static constexpr float kRagdollDefaultTwistMax = 0.1f;
 
-[[nodiscard]] PyObject * SkeletonAddJoint(SkeletonObject *self,
+[[nodiscard]] BoundResult SkeletonAddJoint(SkeletonObject *self,
                                                             PyObject *const *args, size_t nargsf,
                                                             PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
@@ -37,20 +38,20 @@ static constexpr float kRagdollDefaultTwistMax = 0.1f;
         self->parsers->addJoint.Parse(args, nargs, kwnames, name_obj, parent_idx);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     // 3. Logic
     const char *name = PyUnicode_AsUTF8(name_obj);
     if (!name) {
-        return nullptr;
+        return FailCurrent();
     }
 
     const int idx = self->skeleton->AddJoint(name, parent_idx);
-    return PyLong_FromLong(idx);
+    return Adopt(PyLong_FromLong(idx));
 }
 
-[[nodiscard]] PyObject * SkeletonGetJointIndex(SkeletonObject *self,
+[[nodiscard]] BoundResult SkeletonGetJointIndex(SkeletonObject *self,
                                                                  PyObject *const *args,
                                                                  size_t nargsf, PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
@@ -62,35 +63,35 @@ static constexpr float kRagdollDefaultTwistMax = 0.1f;
         self->parsers->getJointIdx.Parse(args, nargs, kwnames, name_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     // 3. Logic
     const char *name = PyUnicode_AsUTF8(name_obj);
     if (!name) {
-        return nullptr;
+        return FailCurrent();
     }
 
     const int idx = self->skeleton->GetJointIndex(name);
-    return PyLong_FromLong(idx);
+    return Adopt(PyLong_FromLong(idx));
 }
 
-[[nodiscard]] PyObject * SkeletonFinalize(SkeletonObject *self,
+[[nodiscard]] BoundResult SkeletonFinalize(SkeletonObject *self,
                                                             PyObject *args [[maybe_unused]]) {
     if (!self->skeleton->Finalize()) {
         PyErr_SetString(PyExc_RuntimeError,
                         "Skeleton joints are out of order (parent must be added before child)");
-        return nullptr;
+        return FailCurrent();
     }
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
-[[nodiscard]] PyObject *
+[[nodiscard]] BoundResult
 RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unused]]) {
     if (self->settings->Stabilize()) {
-        Py_RETURN_TRUE;
+        return BorrowedValue(Py_True);
     }
-    Py_RETURN_FALSE;
+    return BorrowedValue(Py_False);
 }
 
 // One message for every access-after-destroy. Kept separate from the
@@ -103,7 +104,7 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
     return nullptr;
 }
 
-[[nodiscard]] PyObject * RagdollDriveToPose(RagdollObject *self,
+[[nodiscard]] BoundResult RagdollDriveToPose(RagdollObject *self,
                                                               PyObject *const *args, size_t nargsf,
                                                               PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
@@ -116,7 +117,7 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
         self->parsers->ragdollDrive.Parse(args, nargs, kwnames, root_p, root_q, py_matrices);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     // `self->ragdoll == nullptr` means destroy() already ran (or construction
@@ -126,7 +127,7 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
     // case; the native ragdoll is still alive, so the call is still refused
     // because it needs the world's shadow lock.
     if (!self->ragdoll || !self->world) [[unlikely]] {
-        return RagdollNotLive();
+        return Adopt(RagdollNotLive());
     }
 
     // 2. RESOURCE ACQUISITION
@@ -135,7 +136,7 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
     // Validate Buffer Size
     const auto matrices_view = BufferView::Acquire(py_matrices);
     if (!matrices_view) {
-        return nullptr;
+        return FailCurrent();
     }
 
     const size_t required_size = static_cast<size_t>(joint_count) * sizeof(JPH::Mat44);
@@ -143,7 +144,7 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
     if (!matrices_view->RequireAtLeast(
             required_size, "Matrices buffer too small. Expected %zu bytes for %d joints, got %zd",
             required_size, joint_count, matrices_bytes)) [[unlikely]] {
-        return nullptr;
+        return FailCurrent();
     }
 
     // The caller's float32 buffer is 4 column-major Vec4 per joint (64 bytes),
@@ -155,31 +156,31 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
     const bool pose_applied = self->ragdoll->DriveToPose(
         root_position, {matrices.data(), static_cast<size_t>(joint_count)});
     if (!pose_applied) {
-        return PyErr_NoMemory();
+        return Adopt(PyErr_NoMemory());
     }
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
-[[nodiscard]] PyObject * RagdollGetBodyHandles(RagdollObject *self,
+[[nodiscard]] BoundResult RagdollGetBodyHandles(RagdollObject *self,
                                                                  PyObject *args [[maybe_unused]]) {
     // Same contract as drive_to_pose and get_debug_info: a missing native
     // ragdoll is an error, not an empty answer. After destroy() there are no
     // part handles left to report.
     if (!self->ragdoll) [[unlikely]] {
-        return RagdollNotLive();
+        return Adopt(RagdollNotLive());
     }
 
     const int body_count = self->ragdoll->BodyCount();
     if (body_count < 0 ||
         static_cast<size_t>(body_count) > static_cast<size_t>(PY_SSIZE_T_MAX) ||
         static_cast<size_t>(body_count) > SIZE_MAX / sizeof(PhysicsRagdollBodyHandleInfo)) {
-        return PyErr_NoMemory();
+        return Adopt(PyErr_NoMemory());
     }
 
     const Py_ssize_t count = static_cast<Py_ssize_t>(body_count);
     PyObject *list         = PyList_New(count);
     if (!list) {
-        return nullptr;
+        return FailCurrent();
     }
 
     PhysicsRagdollBodyHandleInfo *handles =
@@ -188,7 +189,7 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
               : nullptr;
     if (count && !handles) {
         Py_DECREF(list);
-        return PyErr_NoMemory();
+        return Adopt(PyErr_NoMemory());
     }
 
     self->ragdoll->CopyBodyHandles({handles, static_cast<size_t>(count)});
@@ -198,7 +199,7 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
             if (!handle) {
                 Deallocate(handles);
                 Py_DECREF(list);
-                return nullptr;
+                return FailCurrent();
             }
             PyList_SET_ITEM(list, i, handle);
         } else {
@@ -208,7 +209,7 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
     }
 
     Deallocate(handles);
-    return list;
+    return Adopt(list);
 }
 
 // Manual lifetime control, matching Vehicle.destroy().
@@ -218,7 +219,7 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
 // Python reference to go. The Python object stays valid but inert: every
 // accessor raises instead of reading freed memory, and calling destroy() again
 // is a no-op, so teardown paths can call it without tracking state.
-[[nodiscard]] PyObject *RagdollDestroy(RagdollObject *self,
+[[nodiscard]] BoundResult RagdollDestroy(RagdollObject *self,
                                        PyObject *ignored [[maybe_unused]]) {
     // Same hook the collector uses, so destroy() and collection cannot drift.
     self->BeforeClear();
@@ -229,24 +230,24 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
     // whole PhysicsWorld alive.
     Py_CLEAR(self->world);
 
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
-[[nodiscard]] PyObject * RagdollGetDebugInfo(RagdollObject *self,
+[[nodiscard]] BoundResult RagdollGetDebugInfo(RagdollObject *self,
                                                                PyObject *ignored [[maybe_unused]]) {
     if (!self->ragdoll || !self->world) [[unlikely]] {
-        return RagdollNotLive();
+        return Adopt(RagdollNotLive());
     }
 
     const int body_count = self->ragdoll->BodyCount();
     if (body_count < 0 ||
         static_cast<size_t>(body_count) > SIZE_MAX / sizeof(PhysicsRagdollBodyDebugInfo)) {
-        return PyErr_NoMemory();
+        return Adopt(PyErr_NoMemory());
     }
 
     PyObject *list = PyList_New(body_count);
     if (!list) {
-        return nullptr;
+        return FailCurrent();
     }
 
     // PhysicsRagdollBodyDebugInfo holds Jolt's SIMD vector types, so alignof is
@@ -263,7 +264,7 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
                  info_align);
     if (body_count && !info_block) {
         Py_DECREF(list);
-        return PyErr_NoMemory();
+        return Adopt(PyErr_NoMemory());
     }
     auto *info = reinterpret_cast<PhysicsRagdollBodyDebugInfo *>(
         (reinterpret_cast<std::uintptr_t>(info_block) + (info_align - 1)) & ~(info_align - 1));
@@ -271,7 +272,7 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
     if (!self->ragdoll->CopyDebugInfo({info, static_cast<size_t>(body_count)})) {
         Deallocate(info_block);
         Py_DECREF(list);
-        return PyErr_Format(PyExc_RuntimeError, "Unable to read ragdoll body state");
+        return Adopt(PyErr_Format(PyExc_RuntimeError, "Unable to read ragdoll body state"));
     }
 
     for (int i = 0; i < body_count; ++i) {
@@ -293,14 +294,14 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
         if (!dict) {
             Deallocate(info_block);
             Py_DECREF(list);
-            return nullptr;
+            return FailCurrent();
         }
 
         PyList_SET_ITEM(list, i, dict);
     }
 
     Deallocate(info_block);
-    return list;
+    return Adopt(list);
 }
 
 void SkeletonDealloc(SkeletonObject *self) {
@@ -313,9 +314,8 @@ void SkeletonDealloc(SkeletonObject *self) {
     Py_TYPE(self)->tp_free(reinterpret_cast<PyObject *>(self));
 }
 
-[[nodiscard]] PyObject * SkeletonNew(PyTypeObject *type,
-                                                       PyObject *args [[maybe_unused]],
-                                                       PyObject *kwds [[maybe_unused]]) {
+[[nodiscard]] BoundResult SkeletonNew(PyTypeObject *type, PyObject *args [[maybe_unused]],
+                                        PyObject *kwds [[maybe_unused]]) {
     auto self = reinterpret_cast<SkeletonObject *>(type->tp_alloc(type, 0));
     if (self) {
         self->skeleton = nullptr;
@@ -324,16 +324,16 @@ void SkeletonDealloc(SkeletonObject *self) {
         std::unique_ptr<CPH::Skeleton> skeleton = CPH::Skeleton::Create();
         if (!skeleton) {
             Py_DECREF(self);
-            return PyErr_NoMemory();
+            return Adopt(PyErr_NoMemory());
         }
         self->parsers = CPH::Python::NewParserGroup<CPH::Python::SkeletonParsers>();
         if (!self->parsers) {
             Py_DECREF(self);
-            return PyErr_NoMemory();
+            return Adopt(PyErr_NoMemory());
         }
         self->skeleton = skeleton.release();
     }
-    return reinterpret_cast<PyObject *>(self);
+    return Adopt(reinterpret_cast<PyObject *>(self));
 }
 
 void RagdollSettingsDealloc(RagdollSettingsObject *self) {
@@ -356,7 +356,7 @@ void RagdollSettingsDealloc(RagdollSettingsObject *self) {
 // any reference is dropped (the ordering ~Ragdoll requires), VisitRefs() names
 // the world reference, and BeforeFree() releases the parsers.
 
-[[nodiscard]] PyObject * RagdollSettingsAddPart(RagdollSettingsObject *self,
+[[nodiscard]] BoundResult RagdollSettingsAddPart(RagdollSettingsObject *self,
                                                                   PyObject *const *args,
                                                                   size_t nargsf,
                                                                   PyObject *kwnames) {
@@ -383,7 +383,7 @@ void RagdollSettingsDealloc(RagdollSettingsObject *self) {
                                              axis, normal, py_pos);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     // 3. Parse native shape and pose parameters, then delegate engine operations.
@@ -399,7 +399,7 @@ void RagdollSettingsDealloc(RagdollSettingsObject *self) {
         }
     }
     if (!shape) {
-        return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");
+        return Adopt(PyErr_Format(PyExc_ValueError, "Invalid shape configuration"));
     }
 
     bool has_position = false;
@@ -415,7 +415,7 @@ void RagdollSettingsDealloc(RagdollSettingsObject *self) {
         const ParseResult parsed_pos = ParseVec3Into(py_pos, p_stride);
         if (!parsed_pos) [[unlikely]] {
             RaiseParseError(parsed_pos.error());
-            return nullptr;
+            return FailCurrent();
         }
         position     = JPH::RVec3(p_stride.x, p_stride.y, p_stride.z);
         has_position = true;
@@ -436,22 +436,22 @@ void RagdollSettingsDealloc(RagdollSettingsObject *self) {
     const std::expected<int, Error> status = self->settings->AddPart(shape.GetPtr(), request);
 
     if (!status && status.error().Code().Is(RagdollError::InvalidShape)) {
-        return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");
+        return Adopt(PyErr_Format(PyExc_ValueError, "Invalid shape configuration"));
     }
     if (!status && status.error().Code().Is(RagdollError::JointOutOfRange)) {
-        return PyErr_Format(PyExc_IndexError, "Joint index %d out of bounds", joint_idx);
+        return Adopt(PyErr_Format(PyExc_IndexError, "Joint index %d out of bounds", joint_idx));
     }
     if (!status) {
-        return PyErr_Format(PyExc_RuntimeError, "Invalid ragdoll settings state");
+        return Adopt(PyErr_Format(PyExc_RuntimeError, "Invalid ragdoll settings state"));
     }
 
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
 static PyMethodDef kRagdollMethods[] = {
 
-    CPH::Python::FastCallMethod("add_part", RagdollSettingsAddPart),
-    CPH::Python::NoArgsMethod("stabilize", RagdollSettingsStabilize),
+    CPH::Python::Method<&RagdollSettingsAddPart>("add_part"),
+    CPH::Python::NoArgsMethod<&RagdollSettingsStabilize>("stabilize"),
     {nullptr, nullptr, 0, nullptr}};
 
 static PyType_Slot RagdollSettingsSlots[] = {
@@ -469,14 +469,14 @@ PyType_Spec RagdollSettingsSpec = {
 };
 
 static PyMethodDef SkeletonMethods[] = {
-    CPH::Python::FastCallMethod("add_joint", SkeletonAddJoint),
-    CPH::Python::FastCallMethod("get_joint_index", SkeletonGetJointIndex),
-    CPH::Python::NoArgsMethod("finalize", SkeletonFinalize),
+    CPH::Python::Method<&SkeletonAddJoint>("add_joint"),
+    CPH::Python::Method<&SkeletonGetJointIndex>("get_joint_index"),
+    CPH::Python::NoArgsMethod<&SkeletonFinalize>("finalize"),
     {},
 };
 
 static PyType_Slot SkeletonSlots[] = {
-    {.slot = Py_tp_new, .pfunc = reinterpret_cast<void *>(SkeletonNew)},
+    CPH::Python::NewSlot<&SkeletonNew>(),
     {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(SkeletonDealloc)},
     {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(SkeletonMethods)},
     {},
@@ -490,10 +490,10 @@ PyType_Spec SkeletonSpec = {
 };
 
 static PyMethodDef RagdollMethods[] = {
-    CPH::Python::FastCallMethod("drive_to_pose", RagdollDriveToPose),
-    CPH::Python::NoArgsMethod("get_body_handles", RagdollGetBodyHandles),
-    CPH::Python::NoArgsMethod("get_debug_info", RagdollGetDebugInfo),
-    CPH::Python::NoArgsMethod("destroy", RagdollDestroy),
+    CPH::Python::Method<&RagdollDriveToPose>("drive_to_pose"),
+    CPH::Python::NoArgsMethod<&RagdollGetBodyHandles>("get_body_handles"),
+    CPH::Python::NoArgsMethod<&RagdollGetDebugInfo>("get_debug_info"),
+    CPH::Python::NoArgsMethod<&RagdollDestroy>("destroy"),
     {},
 };
 

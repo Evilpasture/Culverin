@@ -4,6 +4,7 @@
 #include <Python.h>
 #include <expected>
 #include <utility>
+#include "bindings/Result.hpp"
 
 namespace CPH::Python {
 
@@ -105,77 +106,77 @@ static PyObject *MakeProxy(PhysicsWorldObject *self, WorldChannel channel) {
 }
 
 // --- Advanced getters for lock and thread management ---
-[[nodiscard]] PyObject * WorldGetIsStepPending(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetIsStepPending(PhysicsWorldObject *self,
                                                     [[maybe_unused]] void *closure) {
     if ((self->physics.stepRequested).load(std::memory_order::acquire)) {
-        Py_RETURN_TRUE;
+        return BorrowedValue(Py_True);
     }
-    Py_RETURN_FALSE;
+    return BorrowedValue(Py_False);
 }
 
 /* --- Shadow Buffer Getters --- */
 
-[[nodiscard]] PyObject * WorldGetPositions(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetPositions(PhysicsWorldObject *self,
                                                 [[maybe_unused]] void *c) {
     // Positions are Stride 4 (X, Y, Z, W)
-    return MakeProxy(self, WorldChannel::Positions);
+    return Adopt(MakeProxy(self, WorldChannel::Positions));
 }
 
-[[nodiscard]] PyObject * WorldGetRotations(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetRotations(PhysicsWorldObject *self,
                                                 [[maybe_unused]] void *c) {
     // Rotations are Stride 4 (X, Y, Z, W)
-    return MakeProxy(self, WorldChannel::Rotations);
+    return Adopt(MakeProxy(self, WorldChannel::Rotations));
 }
 
-[[nodiscard]] PyObject * WorldGetVelocities(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetVelocities(PhysicsWorldObject *self,
                                                  [[maybe_unused]] void *c) {
     // Velocities are Stride 4 (X, Y, Z, Pad)
-    return MakeProxy(self, WorldChannel::LinearVelocities);
+    return Adopt(MakeProxy(self, WorldChannel::LinearVelocities));
 }
 
-[[nodiscard]] PyObject * WorldGetAngularVelocities(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetAngularVelocities(PhysicsWorldObject *self,
                                                         [[maybe_unused]] void *c) {
-    return MakeProxy(self, WorldChannel::AngularVelocities);
+    return Adopt(MakeProxy(self, WorldChannel::AngularVelocities));
 }
 
 /* --- Mutable Metadata Getters (Hardened with Locks) --- */
 
-[[nodiscard]] PyObject * WorldGetCount(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetCount(PhysicsWorldObject *self,
                                             [[maybe_unused]] void *c) {
     // TSan Fix: Lock-free atomic read.
     // Acquire ensures we see the final state of any bodies recently added/removed.
     size_t val = (self->physics.count).load(std::memory_order::acquire);
-    return PyLong_FromSize_t(val);
+    return Adopt(PyLong_FromSize_t(val));
 }
 
-[[nodiscard]] PyObject * WorldGetTime(PhysicsWorldObject *self, [[maybe_unused]] void *c) {
+[[nodiscard]] BoundResult WorldGetTime(PhysicsWorldObject *self, [[maybe_unused]] void *c) {
     // Zero-lock read (smoking gun #2): world.time is atomic, so reading the
     // simulation clock no longer competes with a step for shadowLock.
     const double val = self->physics.time.load(std::memory_order::acquire);
-    return PyFloat_FromDouble(val);
+    return Adopt(PyFloat_FromDouble(val));
 }
 
-[[nodiscard]] PyObject * WorldGetUserDataBuffer(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetUserDataBuffer(PhysicsWorldObject *self,
                                                      [[maybe_unused]] void *c) {
     // User data is Stride 1 (One uint64 per body)
-    return MakeProxy(self, WorldChannel::UserData);
+    return Adopt(MakeProxy(self, WorldChannel::UserData));
 }
 
-[[nodiscard]] PyObject * WorldGetShapeCount(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetShapeCount(PhysicsWorldObject *self,
                                                  [[maybe_unused]] void *closure) {
     // Protected because resize() could move shape_cache
     (self->physics.shadowLock).lock();
     size_t count = self->physics.shapeCacheCount;
     (self->physics.shadowLock).unlock();
-    return PyLong_FromSize_t(count);
+    return Adopt(PyLong_FromSize_t(count));
 }
 
-[[nodiscard]] PyObject * WorldGetMaxBodies(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetMaxBodies(PhysicsWorldObject *self,
                                                 [[maybe_unused]] void *closure) {
-    return PyLong_FromUnsignedLong(self->physics.maxJoltBodies);
+    return Adopt(PyLong_FromUnsignedLong(self->physics.maxJoltBodies));
 }
 
-[[nodiscard]] PyObject * WorldGetRemainingCapacity(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetRemainingCapacity(PhysicsWorldObject *self,
                                                         [[maybe_unused]] void *closure) {
     // TSan Fix: Lock-free calculation using atomic count.
     size_t current = (self->physics.count).load(std::memory_order::acquire);
@@ -184,7 +185,7 @@ static PyObject *MakeProxy(PhysicsWorldObject *self, WorldChannel channel) {
     size_t limit = self->physics.maxJoltBodies;
     size_t rem   = (current >= limit) ? 0 : (limit - current);
 
-    return PyLong_FromSize_t(rem);
+    return Adopt(PyLong_FromSize_t(rem));
 }
 
 } // namespace CPH::Python

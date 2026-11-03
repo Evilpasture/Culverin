@@ -5,6 +5,7 @@
 // no platform-interaction maths live here any more.
 
 #include "bindings/PyGcObject.hpp"
+#include "bindings/Result.hpp"
 #include "bindings/PythonCommon.hpp"
 #include "characters/Character.hpp"
 #include "characters/CharacterParsers.hpp"
@@ -45,7 +46,7 @@ struct CharacterObject : PyGcObject<CharacterObject> {
 
 extern PyType_Spec CharacterSpec;
 
-[[nodiscard]] PyObject *WorldCreateCharacter(struct PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldCreateCharacter(struct PhysicsWorldObject *self,
                                              PyObject *const *args, size_t nargsf,
                                              PyObject *kwnames);
 

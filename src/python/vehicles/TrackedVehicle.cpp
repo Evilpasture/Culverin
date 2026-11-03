@@ -12,6 +12,7 @@
 #include "physics/PhysicsSync.hpp"
 #include <cstring>
 #include <mutex>
+#include "bindings/Result.hpp"
 
 namespace CPH::Python {
 
@@ -82,7 +83,7 @@ bool ParseTracks(PyObject *py_tracks, std::vector<CPH::TrackConfig> &out) {
 
 } // namespace
 
-[[nodiscard]] PyObject *WorldCreateTrackedVehicle(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldCreateTrackedVehicle(PhysicsWorldObject *self,
                                                   PyObject *const *args, size_t nargsf,
                                                   PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
@@ -100,11 +101,11 @@ bool ParseTracks(PyObject *py_tracks, std::vector<CPH::TrackConfig> &out) {
         args, nargs, kwnames, chassis_raw, py_wheels, py_tracks, max_torque, max_rpm);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     if (!PyList_Check(py_wheels)) {
-        return RaiseTrackedCreationFailed();
+        return Adopt(RaiseTrackedCreationFailed());
     }
 
     CPH::TrackedVehicleConfig config;
@@ -119,12 +120,12 @@ bool ParseTracks(PyObject *py_tracks, std::vector<CPH::TrackConfig> &out) {
     for (Py_ssize_t i = 0; i < wheel_count; i++) {
         if (!ParseTrackWheelConfig(PyList_GetItem(py_wheels, i),
                                    config.wheels[static_cast<std::size_t>(i)])) {
-            return RaiseTrackedCreationFailed();
+            return Adopt(RaiseTrackedCreationFailed());
         }
     }
 
     if (!ParseTracks(py_tracks, config.tracks)) {
-        return RaiseTrackedCreationFailed();
+        return Adopt(RaiseTrackedCreationFailed());
     }
 
     // Pending body-creation commands have to run before the chassis handle can
@@ -143,17 +144,17 @@ bool ParseTracks(PyObject *py_tracks, std::vector<CPH::TrackConfig> &out) {
 
     if (!created) {
         if (created.error().Code().Is(CPH::VehicleError::InvalidChassis)) {
-            return PyErr_Format(PyExc_ValueError,
-                                "Invalid chassis handle (Body is dead or pending)");
+            return Adopt(PyErr_Format(PyExc_ValueError,
+                                "Invalid chassis handle (Body is dead or pending)"));
         }
-        return RaiseTrackedCreationFailed();
+        return Adopt(RaiseTrackedCreationFailed());
     }
 
     ModuleState *state = GetModuleState(PyType_GetModule(Py_TYPE(self)));
     auto         *obj =
         PyObject_GC_New(VehicleObject, reinterpret_cast<PyTypeObject *>(state->vehicleType));
     if (obj == nullptr) {
-        return nullptr;
+        return Adopt(nullptr);
     }
     // GC_New leaves the storage uninitialised, and the failure path below
     // decrefs the object, so every field is set before anything can fail.
@@ -164,19 +165,19 @@ bool ParseTracks(PyObject *py_tracks, std::vector<CPH::TrackConfig> &out) {
     obj->parsers = CPH::Python::NewParserGroup<CPH::Python::VehicleParsers>();
     if (obj->parsers == nullptr) {
         Py_DECREF(reinterpret_cast<PyObject *>(obj));
-        return PyErr_NoMemory();
+        return Adopt(PyErr_NoMemory());
     }
 
     obj->vehicle = created->release();
     obj->world   = reinterpret_cast<PhysicsWorldObject *>(Py_NewRef(self));
 
     PyObject_GC_Track(reinterpret_cast<PyObject *>(obj));
-    return reinterpret_cast<PyObject *>(obj);
+    return Adopt(reinterpret_cast<PyObject *>(obj));
 }
 
 // --- Controls ----------------------------------------------------------------
 
-[[nodiscard]] PyObject *VehicleSetTankInput(VehicleObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult VehicleSetTankInput(VehicleObject *self, PyObject *const *args,
                                             size_t nargsf, PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
 
@@ -188,13 +189,13 @@ bool ParseTracks(PyObject *py_tracks, std::vector<CPH::TrackConfig> &out) {
                                                               brake);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     if (self->vehicle != nullptr) {
         self->vehicle->SetTankInput(left, right, brake);
     }
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
 } // namespace CPH::Python

@@ -815,6 +815,31 @@ Status of the migration:
   `tests/test_object_lifetime.py` drives every GC type through the same
   factories so a new type has an obvious place to be declared.
 
+* **The return channel — one value, not two channels.** CPython reports failure
+  through the return value and the thread-state error indicator at the same
+  time, and nothing in the C API keeps the two in step: a `NULL` with no
+  exception pending becomes CPython's generic "returned NULL without setting an
+  exception" `SystemError`, and a value returned with an exception pending hands
+  the caller a result while latching the error onto whatever runs next. Neither
+  is expressible in the old shape (`PyObject *`), so no compiler could object.
+  Every Python-facing implementation now returns
+  `std::expected<BoundValue, Exception>` (`bindings/Result.hpp`): a success
+  owns exactly one reference and implies no exception, a failure owns the
+  exception description and implies no value, and there is no third
+  representation. `Bridge()` is the only code that writes the two channels, and
+  the registration helpers (`Method<&Impl>`, `NoArgsMethod<&Impl>`,
+  `OneArgMethod<&Impl>`, `GetSet<&Impl>`, `NewSlot<&Impl>`) take the
+  implementation as a template argument and `static_assert` on its return type,
+  so an implementation that manages the indicator itself cannot be registered at
+  all — all 165 method/getset entries and the three allocating `tp_new` slots
+  are gated this way. Failure keeps its exact diagnostic: a captured
+  `ParseError` travels as a value and is reinstated verbatim by
+  `PyErr_SetRaisedException`, which is what `tests/test_diagnostics.py` pins.
+  The remaining dual-channel functions are the ones CPython's ABI forces to
+  return `int` (`tp_init`, `bf_getbuffer`/`bf_releasebuffer`) or `Py_ssize_t`
+  (`sq_length`); those cannot return a value at all, so they are out of scope by
+  construction rather than by omission.
+
 * **Profiling.** `CPH_PROFILE_BEGIN`/`CPH_PROFILE_END`/`CPH_PROFILE_ACCUMULATE`
   and the no-op `CPH_INIT_PROFILER` are gone, replaced by RAII
   `CPH::ProfileScope` and `CPH::ProfileAccumulator` (core/Profiling.hpp). A

@@ -11,6 +11,7 @@
 #include "vehicles/Vehicle.hpp"
 #include "vehicles/VehicleParsers.hpp"
 #include <Python.h>
+#include "bindings/Result.hpp"
 
 namespace CPH::Python {
 
@@ -45,13 +46,13 @@ struct VehicleObject : PyGcObject<VehicleObject> {
 
 extern PyType_Spec VehicleSpec;
 
-[[nodiscard]] PyObject *WorldCreateVehicle(PhysicsWorldObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult WorldCreateVehicle(PhysicsWorldObject *self, PyObject *const *args,
                                            size_t nargsf, PyObject *kwnames);
-[[nodiscard]] PyObject *WorldCreateTrackedVehicle(PhysicsWorldObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult WorldCreateTrackedVehicle(PhysicsWorldObject *self, PyObject *const *args,
                                                   size_t nargsf, PyObject *kwnames);
-[[nodiscard]] PyObject *VehicleSetInput(VehicleObject *self, PyObject *const *args, size_t nargsf,
+[[nodiscard]] BoundResult VehicleSetInput(VehicleObject *self, PyObject *const *args, size_t nargsf,
                                         PyObject *kwnames);
-[[nodiscard]] PyObject *VehicleSetTankInput(VehicleObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult VehicleSetTankInput(VehicleObject *self, PyObject *const *args,
                                             size_t nargsf, PyObject *kwnames);
 
 } // namespace CPH::Python

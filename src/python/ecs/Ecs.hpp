@@ -9,6 +9,7 @@
 #include "ecs/Registry.hpp"
 #include <Python.h>
 #include <memory>
+#include "bindings/Result.hpp"
 
 namespace CPH::Python {
 
@@ -23,39 +24,39 @@ struct RegistryObject {
 void               RegistryDealloc(RegistryObject *self);
 
 // Entity Methods
-[[nodiscard]] PyObject *RegistryCreate(RegistryObject *self, [[maybe_unused]] PyObject *args);
-[[nodiscard]] PyObject *RegistryDestroy(RegistryObject *self, PyObject *const *args, size_t nargsf,
+[[nodiscard]] BoundResult RegistryCreate(RegistryObject *self, [[maybe_unused]] PyObject *args);
+[[nodiscard]] BoundResult RegistryDestroy(RegistryObject *self, PyObject *const *args, size_t nargsf,
                                         PyObject *kwnames);
-[[nodiscard]] PyObject *RegistryIsAlive(RegistryObject *self, PyObject *const *args, size_t nargsf,
+[[nodiscard]] BoundResult RegistryIsAlive(RegistryObject *self, PyObject *const *args, size_t nargsf,
                                         PyObject *kwnames);
-[[nodiscard]] PyObject *RegistryClear(RegistryObject *self, [[maybe_unused]] PyObject *args);
+[[nodiscard]] BoundResult RegistryClear(RegistryObject *self, [[maybe_unused]] PyObject *args);
 
 // Component Methods
-[[nodiscard]] PyObject *RegistryRegisterComponent(RegistryObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult RegistryRegisterComponent(RegistryObject *self, PyObject *const *args,
                                                   size_t nargsf, PyObject *kwnames);
-[[nodiscard]] PyObject *RegistryAdd(RegistryObject *self, PyObject *const *args, size_t nargsf,
+[[nodiscard]] BoundResult RegistryAdd(RegistryObject *self, PyObject *const *args, size_t nargsf,
                                     PyObject *kwnames);
-[[nodiscard]] PyObject *RegistryRemove(RegistryObject *self, PyObject *const *args, size_t nargsf,
+[[nodiscard]] BoundResult RegistryRemove(RegistryObject *self, PyObject *const *args, size_t nargsf,
                                        PyObject *kwnames);
-[[nodiscard]] PyObject *RegistryHas(RegistryObject *self, PyObject *const *args, size_t nargsf,
+[[nodiscard]] BoundResult RegistryHas(RegistryObject *self, PyObject *const *args, size_t nargsf,
                                     PyObject *kwnames);
 
 // Data Access
-[[nodiscard]] PyObject *RegistryGet(RegistryObject *self, PyObject *const *args, size_t nargsf,
+[[nodiscard]] BoundResult RegistryGet(RegistryObject *self, PyObject *const *args, size_t nargsf,
                                     PyObject *kwnames);
-[[nodiscard]] PyObject *RegistryGetView(RegistryObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult RegistryGetView(RegistryObject *self, PyObject *const *args,
                                         size_t nargsf, PyObject *kwnames);
-[[nodiscard]] PyObject *RegistryGetEntities(RegistryObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult RegistryGetEntities(RegistryObject *self, PyObject *const *args,
                                             size_t nargsf, PyObject *kwnames);
 
 // Synchronization
-[[nodiscard]] PyObject *RegistrySyncFromWorld(RegistryObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult RegistrySyncFromWorld(RegistryObject *self, PyObject *const *args,
                                               size_t nargsf, PyObject *kwnames);
 
 // Stats
-[[nodiscard]] PyObject *RegistryGetActiveCount(RegistryObject *self,
+[[nodiscard]] BoundResult RegistryGetActiveCount(RegistryObject *self,
                                                [[maybe_unused]] PyObject *args);
-[[nodiscard]] PyObject *RegistryGetComponentCount(RegistryObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult RegistryGetComponentCount(RegistryObject *self, PyObject *const *args,
                                                   size_t nargsf, PyObject *kwnames);
 
 } // namespace CPH::Python

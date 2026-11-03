@@ -16,6 +16,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include "bindings/Result.hpp"
 
 namespace CPH::Python {
 
@@ -92,15 +93,15 @@ void RegistryDealloc(RegistryObject *self) {
 
 // --- ENTITY MANAGEMENT ---
 
-[[nodiscard]] PyObject *RegistryCreate(RegistryObject *self, [[maybe_unused]] PyObject *args) {
+[[nodiscard]] BoundResult RegistryCreate(RegistryObject *self, [[maybe_unused]] PyObject *args) {
     const CPH::Entity entity = self->registry->Create();
     if (!entity.IsValid()) {
-        return PyErr_NoMemory();
+        return Adopt(PyErr_NoMemory());
     }
-    return PyLong_FromUnsignedLongLong(entity.Raw());
+    return Adopt(PyLong_FromUnsignedLongLong(entity.Raw()));
 }
 
-[[nodiscard]] PyObject *RegistryDestroy(RegistryObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult RegistryDestroy(RegistryObject *self, PyObject *const *args,
                                         size_t nargsf, PyObject *kwnames) {
     uint64_t handle_raw;
 
@@ -108,14 +109,14 @@ void RegistryDealloc(RegistryObject *self) {
         self->parsers->regEntityOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     self->registry->Destroy(CPH::Entity(handle_raw));
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
-[[nodiscard]] PyObject *RegistryIsAlive(RegistryObject *self, PyObject *const *args, size_t nargsf,
+[[nodiscard]] BoundResult RegistryIsAlive(RegistryObject *self, PyObject *const *args, size_t nargsf,
                                         PyObject *kwnames) {
     uint64_t handle_raw;
 
@@ -123,26 +124,26 @@ void RegistryDealloc(RegistryObject *self) {
         self->parsers->regEntityOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     if (self->registry->IsAlive(CPH::Entity(handle_raw))) {
-        Py_RETURN_TRUE;
+        return BorrowedValue(Py_True);
     }
-    Py_RETURN_FALSE;
+    return BorrowedValue(Py_False);
 }
 
-[[nodiscard]] PyObject *RegistryClear(RegistryObject *self, [[maybe_unused]] PyObject *args) {
+[[nodiscard]] BoundResult RegistryClear(RegistryObject *self, [[maybe_unused]] PyObject *args) {
     const std::expected<void, CPH::Error> cleared = self->registry->Clear();
     if (!cleared) {
-        return RaiseEcsError(cleared.error());
+        return Adopt(RaiseEcsError(cleared.error()));
     }
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
 // --- COMPONENT MANAGEMENT ---
 
-[[nodiscard]] PyObject *RegistryRegisterComponent(RegistryObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult RegistryRegisterComponent(RegistryObject *self, PyObject *const *args,
                                                   size_t nargsf, PyObject *kwnames) {
     uint32_t size;
 
@@ -150,18 +151,18 @@ void RegistryDealloc(RegistryObject *self) {
         self->parsers->regRegComp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, size);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     const std::expected<CPH::Registry::ComponentId, CPH::Error> component =
         self->registry->RegisterComponent(size);
     if (!component) {
-        return RaiseEcsError(component.error());
+        return Adopt(RaiseEcsError(component.error()));
     }
-    return PyLong_FromUnsignedLong(*component);
+    return Adopt(PyLong_FromUnsignedLong(*component));
 }
 
-[[nodiscard]] PyObject *RegistryAdd(RegistryObject *self, PyObject *const *args, size_t nargsf,
+[[nodiscard]] BoundResult RegistryAdd(RegistryObject *self, PyObject *const *args, size_t nargsf,
                                     PyObject *kwnames) {
     uint64_t handle_raw;
     uint32_t comp_id;
@@ -171,7 +172,7 @@ void RegistryDealloc(RegistryObject *self) {
         args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw, comp_id, data_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     // The payload arrives as a Python buffer; this is the one place the
@@ -180,7 +181,7 @@ void RegistryDealloc(RegistryObject *self) {
     if (data_obj != nullptr && data_obj != Py_None) {
         payload_view = BufferView::Acquire(data_obj);
         if (!payload_view) {
-            return nullptr;
+            return FailCurrent();
         }
     }
 
@@ -203,15 +204,15 @@ void RegistryDealloc(RegistryObject *self) {
             // The sizes are known only here (buffer length) and in the
             // registry (registered element size), so this message is
             // formatted at the boundary.
-            return PyErr_Format(PyExc_ValueError, "Data size mismatch: expected %u, got %zd",
-                                self->registry->ComponentElementSize(comp_id), view_len);
+            return Adopt(PyErr_Format(PyExc_ValueError, "Data size mismatch: expected %u, got %zd",
+                                      self->registry->ComponentElementSize(comp_id), view_len));
         }
-        return RaiseEcsError(added.error());
+        return Adopt(RaiseEcsError(added.error()));
     }
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
-[[nodiscard]] PyObject *RegistryRemove(RegistryObject *self, PyObject *const *args, size_t nargsf,
+[[nodiscard]] BoundResult RegistryRemove(RegistryObject *self, PyObject *const *args, size_t nargsf,
                                        PyObject *kwnames) {
     uint64_t handle_raw;
     uint32_t comp_id;
@@ -220,18 +221,18 @@ void RegistryDealloc(RegistryObject *self) {
         args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw, comp_id);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     const std::expected<void, CPH::Error> removed =
         self->registry->Remove(CPH::Entity(handle_raw), comp_id);
     if (!removed) {
-        return RaiseEcsError(removed.error());
+        return Adopt(RaiseEcsError(removed.error()));
     }
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
-[[nodiscard]] PyObject *RegistryHas(RegistryObject *self, PyObject *const *args, size_t nargsf,
+[[nodiscard]] BoundResult RegistryHas(RegistryObject *self, PyObject *const *args, size_t nargsf,
                                     PyObject *kwnames) {
     uint64_t handle_raw;
     uint32_t comp_id;
@@ -240,23 +241,23 @@ void RegistryDealloc(RegistryObject *self) {
         args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw, comp_id);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     const std::expected<bool, CPH::Error> has =
         self->registry->Has(CPH::Entity(handle_raw), comp_id);
     if (!has) {
-        return RaiseEcsError(has.error());
+        return Adopt(RaiseEcsError(has.error()));
     }
     if (*has) {
-        Py_RETURN_TRUE;
+        return BorrowedValue(Py_True);
     }
-    Py_RETURN_FALSE;
+    return BorrowedValue(Py_False);
 }
 
 // --- DATA ACCESS ---
 
-[[nodiscard]] PyObject *RegistryGet(RegistryObject *self, PyObject *const *args, size_t nargsf,
+[[nodiscard]] BoundResult RegistryGet(RegistryObject *self, PyObject *const *args, size_t nargsf,
                                     PyObject *kwnames) {
     uint64_t handle_raw;
     uint32_t comp_id;
@@ -265,22 +266,22 @@ void RegistryDealloc(RegistryObject *self) {
         args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw, comp_id);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     const std::expected<std::optional<std::span<const std::byte>>, CPH::Error> found =
         self->registry->Get(CPH::Entity(handle_raw), comp_id);
     if (!found) {
-        return RaiseEcsError(found.error());
+        return Adopt(RaiseEcsError(found.error()));
     }
     if (!*found) {
-        Py_RETURN_NONE;
+        return BorrowedValue(Py_None);
     }
-    return PyBytes_FromStringAndSize(reinterpret_cast<const char *>(found->value().data()),
-                                     static_cast<Py_ssize_t>(found->value().size()));
+    return Adopt(PyBytes_FromStringAndSize(reinterpret_cast<const char *>(found->value().data()),
+                                           static_cast<Py_ssize_t>(found->value().size())));
 }
 
-[[nodiscard]] PyObject *RegistryGetView(RegistryObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult RegistryGetView(RegistryObject *self, PyObject *const *args,
                                         size_t nargsf, PyObject *kwnames) {
     uint32_t comp_id;
 
@@ -288,12 +289,12 @@ void RegistryDealloc(RegistryObject *self) {
         self->parsers->regCompOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, comp_id);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
-    return MakeEcsProxy(self, comp_id, false);
+    return Adopt(MakeEcsProxy(self, comp_id, false));
 }
 
-[[nodiscard]] PyObject *RegistryGetEntities(RegistryObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult RegistryGetEntities(RegistryObject *self, PyObject *const *args,
                                             size_t nargsf, PyObject *kwnames) {
     uint32_t comp_id;
 
@@ -301,14 +302,14 @@ void RegistryDealloc(RegistryObject *self) {
         self->parsers->regCompOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, comp_id);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
-    return MakeEcsProxy(self, comp_id, true);
+    return Adopt(MakeEcsProxy(self, comp_id, true));
 }
 
 // --- SYNCHRONIZATION ---
 
-[[nodiscard]] PyObject *RegistrySyncFromWorld(RegistryObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult RegistrySyncFromWorld(RegistryObject *self, PyObject *const *args,
                                               size_t nargsf, PyObject *kwnames) {
     PyObject *world_obj = nullptr;
     uint32_t h_comp_id;
@@ -319,7 +320,7 @@ void RegistryDealloc(RegistryObject *self) {
         args, PyVectorcall_NARGS(nargsf), kwnames, world_obj, h_comp_id, p_comp_id, r_comp_id);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     PhysicsWorldObject *world = reinterpret_cast<PhysicsWorldObject *>(world_obj);
@@ -331,19 +332,19 @@ void RegistryDealloc(RegistryObject *self) {
     const std::expected<void, CPH::Error> synced =
         CPH::SyncEcsTransforms(world->physics, *self->registry, config);
     if (!synced) {
-        return RaiseEcsError(synced.error());
+        return Adopt(RaiseEcsError(synced.error()));
     }
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
 // --- STATS ---
 
-[[nodiscard]] PyObject *RegistryGetActiveCount(RegistryObject *self,
+[[nodiscard]] BoundResult RegistryGetActiveCount(RegistryObject *self,
                                                [[maybe_unused]] PyObject *args) {
-    return PyLong_FromUnsignedLong(self->registry->active_entity_count());
+    return Adopt(PyLong_FromUnsignedLong(self->registry->active_entity_count()));
 }
 
-[[nodiscard]] PyObject *RegistryGetComponentCount(RegistryObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult RegistryGetComponentCount(RegistryObject *self, PyObject *const *args,
                                                   size_t nargsf, PyObject *kwnames) {
     uint32_t comp_id;
 
@@ -351,28 +352,27 @@ void RegistryDealloc(RegistryObject *self) {
         self->parsers->regCompOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, comp_id);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
-    return PyLong_FromSsize_t(self->registry->ComponentCount(comp_id));
+    return Adopt(PyLong_FromSsize_t(self->registry->ComponentCount(comp_id)));
 }
 
 static PyMethodDef kRegistryMethods[] = {
 
-    CPH::Python::NoArgsMethod("create", RegistryCreate),
-    CPH::Python::FastCallMethod("destroy", RegistryDestroy),
-    CPH::Python::FastCallMethod("is_alive", RegistryIsAlive),
-    CPH::Python::NoArgsMethod("clear", RegistryClear), // Wipes the registry
-    CPH::Python::FastCallMethod("register_component", RegistryRegisterComponent),
-    CPH::Python::FastCallMethod("add", RegistryAdd),
-    CPH::Python::FastCallMethod("remove", RegistryRemove),
-    CPH::Python::FastCallMethod("has", RegistryHas),
-    CPH::Python::FastCallMethod("get", RegistryGet), // Single entity data access
-    CPH::Python::FastCallMethod("get_view", RegistryGetView),
-    CPH::Python::FastCallMethod("get_entities", RegistryGetEntities),
-    CPH::Python::FastCallMethod("sync_from_world", RegistrySyncFromWorld),
-    CPH::Python::NoArgsMethod("get_active_count", RegistryGetActiveCount), // ECS Statistics
-    CPH::Python::FastCallMethod("get_component_count",
-                                RegistryGetComponentCount), // ECS Statistics
+    CPH::Python::NoArgsMethod<&RegistryCreate>("create"),
+    CPH::Python::Method<&RegistryDestroy>("destroy"),
+    CPH::Python::Method<&RegistryIsAlive>("is_alive"),
+    CPH::Python::NoArgsMethod<&RegistryClear>("clear"), // Wipes the registry
+    CPH::Python::Method<&RegistryRegisterComponent>("register_component"),
+    CPH::Python::Method<&RegistryAdd>("add"),
+    CPH::Python::Method<&RegistryRemove>("remove"),
+    CPH::Python::Method<&RegistryHas>("has"),
+    CPH::Python::Method<&RegistryGet>("get"), // Single entity data access
+    CPH::Python::Method<&RegistryGetView>("get_view"),
+    CPH::Python::Method<&RegistryGetEntities>("get_entities"),
+    CPH::Python::Method<&RegistrySyncFromWorld>("sync_from_world"),
+    CPH::Python::NoArgsMethod<&RegistryGetActiveCount>("get_active_count"), // ECS Statistics
+    CPH::Python::Method<&RegistryGetComponentCount>("get_component_count"), // ECS Statistics
     {nullptr, nullptr, 0, nullptr}};
 
 static PyType_Slot RegistrySlots[] = {

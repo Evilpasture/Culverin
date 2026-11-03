@@ -19,6 +19,7 @@
 // wrapper. Relaxing this means giving `Arg` a default or seeding the tuple
 // from the caller; see the note on `Arg` in Parser.hpp.
 
+#include "bindings/Result.hpp"
 #include "bindings/parsing/Parser.hpp"
 #include "bindings/parsing/ParseError.hpp"
 
@@ -58,17 +59,23 @@ struct ParserSignature<Parser<Name, Args...>> {
 
 // The two return shapes a thunk action may use. Anything else is rejected at
 // the call site rather than being converted through one of these.
-[[nodiscard]] inline PyObject *MarshalThunkResult(PyObject *result) noexcept { return result; }
-
-[[nodiscard]] inline PyObject *MarshalThunkResult(bool result) noexcept {
-    return PyBool_FromLong(result ? 1 : 0);
+//
+// The action speaks the boundary vocabulary, so an action that returns a new
+// reference is adopted (adopting NULL folds in the exception it left pending)
+// and a bool becomes the borrowed singleton -- never an owned copy of it.
+[[nodiscard]] inline BoundResult MarshalThunkResult(PyObject *result) noexcept {
+    return Adopt(result);
 }
 
-template <typename Result> PyObject *MarshalThunkResult(Result) = delete;
+[[nodiscard]] inline BoundResult MarshalThunkResult(bool result) noexcept {
+    return BorrowedValue(result ? Py_True : Py_False);
+}
+
+template <typename Result> BoundResult MarshalThunkResult(Result) = delete;
 
 template <auto ParserMember, typename Self, typename Action>
-[[nodiscard]] inline PyObject *InvokeThunk(Self *self, PyObject *const *args, size_t nargsf,
-                                           PyObject *kwnames, Action &&action) {
+[[nodiscard]] inline BoundResult InvokeThunk(Self *self, PyObject *const *args, size_t nargsf,
+                                               PyObject *kwnames, Action &&action) {
     using ParserType = std::remove_cvref_t<decltype(self->parsers->*ParserMember)>;
     using Sig        = ParserSignature<ParserType>;
     static_assert(Sig::is_parser, "the member must be a Parser declared in the group");
@@ -77,18 +84,19 @@ template <auto ParserMember, typename Self, typename Action>
     // that restricts this to all-required parsers.
     typename Sig::Tuple values{};
 
-    const ParseResult parsed = Sig::ParseTuple(self->parsers->*ParserMember, args,
+    ParseResult parsed = Sig::ParseTuple(self->parsers->*ParserMember, args,
                                                PyVectorcall_NARGS(nargsf), kwnames, values);
     if (!parsed) [[unlikely]] {
-        RaiseParseError(parsed.error());
-        return nullptr;
+        // The captured diagnostic travels as a value instead of being raised and
+        // re-read; Bridge() reinstates it at the boundary.
+        return Fail(std::move(parsed).error());
     }
 
     auto invoke = [self, &action](auto &...unpacked) { return action(self, unpacked...); };
 
     if constexpr (std::is_void_v<decltype(std::apply(invoke, values))>) {
         std::apply(invoke, values);
-        Py_RETURN_NONE;
+        return BorrowedValue(Py_None);
     } else {
         return MarshalThunkResult(std::apply(invoke, values));
     }

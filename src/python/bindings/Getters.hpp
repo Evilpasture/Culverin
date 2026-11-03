@@ -5,6 +5,7 @@
 #include <new>
 #include "bindings/PyGcObject.hpp"
 #include <Python.h>
+#include "bindings/Result.hpp"
 
 namespace CPH::Python {
 
@@ -75,35 +76,34 @@ struct BufferProxyObject : PyGcObject<BufferProxyObject> {
 extern PyType_Slot BufferProxySlots[];
 extern PyType_Spec BufferProxySpec;
 
-[[nodiscard]] PyObject * WorldGetIsStepPending(struct PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetIsStepPending(struct PhysicsWorldObject *self,
                                                     [[maybe_unused]] void *closure);
-[[nodiscard]] PyObject * WorldGetPositions(struct PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetPositions(struct PhysicsWorldObject *self,
                                                 [[maybe_unused]] void *c);
-[[nodiscard]] PyObject * WorldGetRotations(struct PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetRotations(struct PhysicsWorldObject *self,
                                                 [[maybe_unused]] void *c);
-[[nodiscard]] PyObject * WorldGetVelocities(struct PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetVelocities(struct PhysicsWorldObject *self,
                                                  [[maybe_unused]] void *c);
-[[nodiscard]] PyObject * WorldGetAngularVelocities(struct PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetAngularVelocities(struct PhysicsWorldObject *self,
                                                         [[maybe_unused]] void *c);
-[[nodiscard]] PyObject * WorldGetCount(struct PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetCount(struct PhysicsWorldObject *self,
                                             [[maybe_unused]] void *c);
-[[nodiscard]] PyObject * WorldGetTime(struct PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetTime(struct PhysicsWorldObject *self,
                                            [[maybe_unused]] void *c);
-[[nodiscard]] PyObject * WorldGetUserDataBuffer(struct PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetUserDataBuffer(struct PhysicsWorldObject *self,
                                                      [[maybe_unused]] void *c);
 
-[[nodiscard]] PyObject * VehicleGetWheelCount(struct VehicleObject *self,
+[[nodiscard]] BoundResult VehicleGetWheelCount(struct VehicleObject *self,
                                                    [[maybe_unused]] void *closure);
 
-[[nodiscard]] PyObject * WorldGetShapeCount(struct PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetShapeCount(struct PhysicsWorldObject *self,
                                                  [[maybe_unused]] void *closure);
 
-[[nodiscard]] PyObject * WorldGetMaxBodies(struct PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetMaxBodies(struct PhysicsWorldObject *self,
                                                 [[maybe_unused]] void *closure);
-[[nodiscard]] PyObject * WorldGetRemainingCapacity(struct PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldGetRemainingCapacity(struct PhysicsWorldObject *self,
                                                         [[maybe_unused]] void *closure);
-[[nodiscard]] PyObject *
-WorldGetSoftBodyVertices(struct PhysicsWorldObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult WorldGetSoftBodyVertices(struct PhysicsWorldObject *self, PyObject *const *args,
                                 size_t nargsf, PyObject *kwnames);
 
 } // namespace CPH::Python

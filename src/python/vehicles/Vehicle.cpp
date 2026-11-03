@@ -13,6 +13,7 @@
 #include "physics/PhysicsSync.hpp"
 #include <cstring>
 #include <mutex>
+#include "bindings/Result.hpp"
 
 namespace CPH::Python {
 
@@ -190,7 +191,7 @@ bool ParseWheelConfigs(PyObject *py_wheels, std::vector<CPH::WheelConfig> &out) 
 
 // --- Creation ----------------------------------------------------------------
 
-[[nodiscard]] PyObject *WorldCreateVehicle(PhysicsWorldObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult WorldCreateVehicle(PhysicsWorldObject *self, PyObject *const *args,
                                            size_t nargsf, PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
 
@@ -204,16 +205,16 @@ bool ParseWheelConfigs(PyObject *py_wheels, std::vector<CPH::WheelConfig> &out) 
         args, nargs, kwnames, chassis_raw, py_wheels, py_drive, py_engine, py_trans);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     if (!PyList_Check(py_wheels) || PyList_Size(py_wheels) < 2) {
-        return PyErr_Format(PyExc_ValueError, "Wheels must be a list of at least 2 dictionaries");
+        return Adopt(PyErr_Format(PyExc_ValueError, "Wheels must be a list of at least 2 dictionaries"));
     }
 
     CPH::WheeledVehicleConfig config;
     if (!ParseWheelConfigs(py_wheels, config.wheels)) {
-        return nullptr;
+        return FailCurrent();
     }
     config.drive = ParseDriveMode(py_drive);
     ParseEngine(py_engine, config.engine);
@@ -234,13 +235,13 @@ bool ParseWheelConfigs(PyObject *py_wheels, std::vector<CPH::WheelConfig> &out) 
     }
 
     if (!created) {
-        return RaiseVehicleError(created.error());
+        return Adopt(RaiseVehicleError(created.error()));
     }
 
     ModuleState *state = GetModuleState(PyType_GetModule(Py_TYPE(self)));
     auto         *obj  = VehicleObject::New(reinterpret_cast<PyTypeObject *>(state->vehicleType));
     if (obj == nullptr) {
-        return nullptr;
+        return FailCurrent();
     }
     // The base zeroes every member, so the failure path below can decref a
     // half-built object safely.
@@ -248,7 +249,7 @@ bool ParseWheelConfigs(PyObject *py_wheels, std::vector<CPH::WheelConfig> &out) 
     obj->parsers = CPH::Python::NewParserGroup<CPH::Python::VehicleParsers>();
     if (obj->parsers == nullptr) {
         Py_DECREF(reinterpret_cast<PyObject *>(obj));
-        return PyErr_NoMemory();
+        return Adopt(PyErr_NoMemory());
     }
 
     obj->vehicle = created->release();
@@ -261,12 +262,12 @@ bool ParseWheelConfigs(PyObject *py_wheels, std::vector<CPH::WheelConfig> &out) 
     // vehicles never did this, so the two paths disagreed.
     obj->world = reinterpret_cast<PhysicsWorldObject *>(Py_NewRef(self));
 
-    return obj->Publish();
+    return Adopt(obj->Publish());
 }
 
 // --- Controls ----------------------------------------------------------------
 
-[[nodiscard]] PyObject *VehicleSetInput(VehicleObject *self, PyObject *const *args, size_t nargsf,
+[[nodiscard]] BoundResult VehicleSetInput(VehicleObject *self, PyObject *const *args, size_t nargsf,
                                         PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
 
@@ -279,13 +280,13 @@ bool ParseWheelConfigs(PyObject *py_wheels, std::vector<CPH::WheelConfig> &out) 
         self->parsers->vehicleInput.Parse(args, nargs, kwnames, forward, right, brake, handbrake);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return FailCurrent();
     }
 
     if (self->vehicle != nullptr) {
         self->vehicle->SetInput(forward, right, brake, handbrake);
     }
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
 // --- Queries -----------------------------------------------------------------
@@ -322,22 +323,22 @@ PyObject *WheelQuery(VehicleObject *self, PyObject *const *args, size_t nargsf, 
 
 } // namespace
 
-[[nodiscard]] PyObject *VehicleGetWheelTransform(VehicleObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult VehicleGetWheelTransform(VehicleObject *self, PyObject *const *args,
                                                  size_t nargsf, PyObject *kwnames) {
-    return WheelQuery(self, args, nargsf, kwnames, false);
+    return Adopt(WheelQuery(self, args, nargsf, kwnames, false));
 }
 
-[[nodiscard]] PyObject *VehicleGetWheelLocalTransform(VehicleObject *self, PyObject *const *args,
+[[nodiscard]] BoundResult VehicleGetWheelLocalTransform(VehicleObject *self, PyObject *const *args,
                                                       size_t nargsf, PyObject *kwnames) {
-    return WheelQuery(self, args, nargsf, kwnames, true);
+    return Adopt(WheelQuery(self, args, nargsf, kwnames, true));
 }
 
-[[nodiscard]] PyObject *VehicleGetDebugState(VehicleObject *self,
+[[nodiscard]] BoundResult VehicleGetDebugState(VehicleObject *self,
                                              PyObject *ignored [[maybe_unused]]) {
     if (self->vehicle != nullptr) {
         self->vehicle->LogDebugState();
     }
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
 // --- Lifecycle ---------------------------------------------------------------
@@ -345,31 +346,31 @@ PyObject *WheelQuery(VehicleObject *self, PyObject *const *args, size_t nargsf, 
 // dealloc, traverse and clear all come from PyGcObject; VehicleBinding.hpp
 // declares what they act on.
 
-[[nodiscard]] PyObject *VehicleDestroy(VehicleObject *self,
+[[nodiscard]] BoundResult VehicleDestroy(VehicleObject *self,
                                        PyObject *ignored [[maybe_unused]]) {
     delete self->vehicle;
     self->vehicle = nullptr;
-    Py_RETURN_NONE;
+    return BorrowedValue(Py_None);
 }
 
 
-[[nodiscard]] PyObject *VehicleGetWheelCount(VehicleObject *self,
+[[nodiscard]] BoundResult VehicleGetWheelCount(VehicleObject *self,
                                              [[maybe_unused]] void *closure) {
-    return PyLong_FromUnsignedLong(self->vehicle != nullptr ? self->vehicle->wheel_count() : 0);
+    return Adopt(PyLong_FromUnsignedLong(self->vehicle != nullptr ? self->vehicle->wheel_count() : 0));
 }
 
 static PyMethodDef kVehicleMethods[] = {
 
-    CPH::Python::FastCallMethod("set_input", VehicleSetInput),
-    CPH::Python::FastCallMethod("set_tank_input", VehicleSetTankInput),
-    CPH::Python::FastCallMethod("get_wheel_transform", VehicleGetWheelTransform),
-    CPH::Python::FastCallMethod("get_wheel_local_transform", VehicleGetWheelLocalTransform),
-    CPH::Python::NoArgsMethod("destroy", VehicleDestroy),
-    CPH::Python::NoArgsMethod("get_debug_state", VehicleGetDebugState),
+    CPH::Python::Method<&VehicleSetInput>("set_input"),
+    CPH::Python::Method<&VehicleSetTankInput>("set_tank_input"),
+    CPH::Python::Method<&VehicleGetWheelTransform>("get_wheel_transform"),
+    CPH::Python::Method<&VehicleGetWheelLocalTransform>("get_wheel_local_transform"),
+    CPH::Python::NoArgsMethod<&VehicleDestroy>("destroy"),
+    CPH::Python::NoArgsMethod<&VehicleGetDebugState>("get_debug_state"),
     {nullptr, nullptr, 0, nullptr}};
 
 static PyGetSetDef VehicleGetSets[] = {
-    CPH::Python::GetSet("wheel_count", VehicleGetWheelCount),
+    CPH::Python::GetSet<&VehicleGetWheelCount>("wheel_count"),
     {},
 };
 

@@ -1,3 +1,4 @@
+import sys
 import unittest
 import warnings
 
@@ -124,6 +125,73 @@ class TestFastParseDiagnostics(unittest.TestCase):
             # Note: Depending on which path it takes, this might be a
             # ValueError from PyLong_AsUnsignedLong.
             self.print_error("U32 BOUNDS", e)
+
+
+class TestReturnChannel(unittest.TestCase):
+    """Failure reaches Python through one channel, so the two can never disagree.
+
+    CPython has two: the return value (NULL means "failed") and the thread-state
+    error indicator. A C function that frees itself from one and not the other
+    produces either "SystemError: returned NULL without setting an exception" or
+    a value handed back with an exception latched behind it, poisoning the next
+    unrelated call. The C++ side now returns a single `BoundResult` and lets
+    `Bridge()` write both channels together (bindings/Result.hpp); these tests
+    check the observable half of that contract from across every subsystem.
+    """
+
+    # One deliberately-wrong call per subsystem. Each must reach Python as a
+    # real exception with its own message -- never as a SystemError standing in
+    # for a missing one.
+    CASES = {
+        "world.create_body": lambda w: w.create_body(pos="not-a-vector", size=(1, 1, 1)),
+        "world.set_gravity": lambda w: w.set_gravity("not-a-vector"),
+        "world.create_character": lambda w: w.create_character(pos=(0, 1, 0), height="tall"),
+        "world.create_ragdoll": lambda w: w.create_ragdoll(settings=None, pos=(0, 0, 0)),
+        "world.destroy_body": lambda w: w.destroy_body(object()),
+        "math.inverse": lambda w: culverin.MathService().inverse((1.0, 2.0, 3.0)),
+    }
+
+    def setUp(self) -> None:
+        self.world = culverin.PhysicsWorld()
+
+    def test_failures_are_real_exceptions(self) -> None:
+        for name, call in self.CASES.items():
+            with self.subTest(call=name):
+                with self.assertRaises(Exception) as raised:
+                    call(self.world)
+                # A SystemError here means the C++ side reported failure through
+                # one channel and not the other; the type and message are
+                # CPython's substitute, not the diagnostic the code intended.
+                self.assertNotIsInstance(
+                    raised.exception,
+                    SystemError,
+                    f"{name} failed without a diagnostic: {raised.exception}",
+                )
+                self.assertTrue(
+                    str(raised.exception), f"{name} raised {type(raised.exception).__name__} with no message"
+                )
+
+    def test_a_failed_call_leaves_no_exception_behind(self) -> None:
+        """The error indicator is consumed by the raise, not left pending."""
+        for name, call in self.CASES.items():
+            with self.subTest(call=name):
+                with self.assertRaises(Exception):
+                    call(self.world)
+                # Nothing must be pending now: an unrelated call that succeeds
+                # has to stay successful.
+                self.world.step(0)
+                self.assertIsNone(sys.exc_info()[1])
+
+    def test_success_after_failure_returns_a_usable_value(self) -> None:
+        body = self.world.create_body(pos=(0, 1, 0), size=(1, 1, 1))
+        with self.assertRaises(Exception):
+            self.world.set_gravity("not-a-vector")
+        with self.assertRaises(Exception):
+            self.world.destroy_body(object())
+        # A latched exception would make this call raise or return garbage.
+        self.assertIsInstance(self.world.get_gravity(), tuple)
+        self.world.step(0)
+        self.assertIsNotNone(body)
 
 if __name__ == "__main__":
     # Ensure stdout is flushed for CI logs

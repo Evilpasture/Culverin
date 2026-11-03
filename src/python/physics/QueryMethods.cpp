@@ -6,6 +6,7 @@
 #include "bindings/parsing/Parsers.hpp"
 #include "core/Compiler.hpp"
 #include "jolt/Jolt.hpp"
+#include "bindings/Result.hpp"
 
 namespace CPH::Python {
 
@@ -50,7 +51,7 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
     return result;
 }
 
-[[nodiscard]] PyObject * WorldOverlapSphere(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldOverlapSphere(PhysicsWorldObject *self,
                                                               PyObject *const *args, size_t nargsf,
                                                               PyObject *kwnames) {
     PyObject *o_center = nullptr;
@@ -61,7 +62,7 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
                                             radius);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     JPH::Real cx;
@@ -69,7 +70,7 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
     JPH::Real cz;
     if (ParseResult parsed = ParseVec3Into(o_center, cx, cy, cz); !parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     const JPH::RVec3 center(cx, cy, cz);
@@ -82,14 +83,14 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
     }
 
         if (!status) {
-        return QueryStatusError(status.error(), "Failed to resolve sphere shape");
+        return Adopt(QueryStatusError(status.error(), "Failed to resolve sphere shape"));
     }
 
     PyObject *result = OverlapHitsToList(&hits);
-    return result;
+    return Adopt(result);
 }
 
-[[nodiscard]] PyObject * WorldOverlapAabb(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldOverlapAabb(PhysicsWorldObject *self,
                                                             PyObject *const *args, size_t nargsf,
                                                             PyObject *kwnames) {
     PyObject *o_min = nullptr;
@@ -100,7 +101,7 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
                                           o_max);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     JPH::Real min_x;
@@ -111,11 +112,11 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
     JPH::Real max_z;
     if (ParseResult parsed = ParseVec3Into(o_min, min_x, min_y, min_z); !parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return Adopt(nullptr);
     }
     if (ParseResult parsed = ParseVec3Into(o_max, max_x, max_y, max_z); !parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     const JPH::RVec3 min(min_x, min_y, min_z);
@@ -129,14 +130,14 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
     }
 
         if (!status) {
-        return QueryStatusError(status.error(), "overlap_aabb received invalid arguments");
+        return Adopt(QueryStatusError(status.error(), "overlap_aabb received invalid arguments"));
     }
 
     PyObject *result = OverlapHitsToList(&hits);
-    return result;
+    return Adopt(result);
 }
 
-[[nodiscard]] PyObject * WorldRaycast(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldRaycast(PhysicsWorldObject *self,
                                                         PyObject *const *args, size_t nargsf,
                                                         PyObject *kwnames) {
     PyObject *o_start      = nullptr;
@@ -149,7 +150,7 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
                                       o_direction, max_distance, ignore_handle);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     JPH::Real start_x;
@@ -160,11 +161,11 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
     float direction_z;
     if (ParseResult parsed = ParseVec3Into(o_start, start_x, start_y, start_z); !parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return Adopt(nullptr);
     }
     if (ParseResult parsed = ParseVec3Into(o_direction, direction_x, direction_y, direction_z); !parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     const JPH::RVec3 origin(start_x, start_y, start_z);
@@ -178,18 +179,18 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
     }
 
         if (!status) {
-        return QueryStatusError(status.error(), "raycast received invalid arguments");
+        return Adopt(QueryStatusError(status.error(), "raycast received invalid arguments"));
     }
     const PhysicsRaycastHit &hit = *status;
     if (!hit.hasHit) {
-        Py_RETURN_NONE;
+        return BorrowedValue(Py_None);
     }
 
-    return BuildTuple(hit.handle.Raw(), hit.fraction,
-                              BuildTuple(hit.normal.GetX(), hit.normal.GetY(), hit.normal.GetZ()));
+    return Adopt(BuildTuple(hit.handle.Raw(), hit.fraction,
+                              BuildTuple(hit.normal.GetX(), hit.normal.GetY(), hit.normal.GetZ())));
 }
 
-[[nodiscard]] PyObject * WorldRaycastBatch(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldRaycastBatch(PhysicsWorldObject *self,
                                                              PyObject *const *args, size_t nargsf,
                                                              PyObject *kwnames) {
     PyObject *o_starts     = nullptr;
@@ -201,47 +202,47 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
                                        o_directions, max_distance);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     const auto starts_view = BufferView::Acquire(o_starts);
     if (!starts_view) [[unlikely]] {
-        return nullptr;
+        return Adopt(nullptr);
     }
     const auto directions_view = BufferView::Acquire(o_directions);
     if (!directions_view) [[unlikely]] {
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     constexpr const char *kSizeMismatch = "Buffer size mismatch";
     if (!starts_view->RequireSameSizeAs(*directions_view, kSizeMismatch) ||
         !starts_view->RequireMultipleOf(kCqmVec3StrideBytes, kSizeMismatch)) [[unlikely]] {
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     const std::span<const float> packed_starts     = starts_view->Float32();
     const std::span<const float> packed_directions = directions_view->Float32();
     const size_t                 count             = starts_view->SizeBytes() / kCqmVec3StrideBytes;
     if (count == 0) {
-        return PyBytes_FromStringAndSize(nullptr, 0);
+        return Adopt(PyBytes_FromStringAndSize(nullptr, 0));
     }
 
     if (count > static_cast<size_t>(PY_SSIZE_T_MAX) / sizeof(RayCastBatchResult)) {
         PyErr_SetString(PyExc_OverflowError, "Batch raycast result is too large");
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     const Py_ssize_t output_size = static_cast<Py_ssize_t>(count * sizeof(RayCastBatchResult));
     PyObject *result_bytes       = PyBytes_FromStringAndSize(nullptr, output_size);
     if (!result_bytes) [[unlikely]] {
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     RayCastBatchResult *results =
         reinterpret_cast<RayCastBatchResult *>(PyBytes_AsString(result_bytes));
     if (!results) [[unlikely]] {
         Py_DECREF(result_bytes);
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     std::expected<void, Error> status;
@@ -253,12 +254,12 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
 
     if (!status) {
         Py_DECREF(result_bytes);
-        return QueryStatusError(status.error(), "raycast_batch received invalid buffers");
+        return Adopt(QueryStatusError(status.error(), "raycast_batch received invalid buffers"));
     }
-    return result_bytes;
+    return Adopt(result_bytes);
 }
 
-[[nodiscard]] PyObject * WorldShapecast(PhysicsWorldObject *self,
+[[nodiscard]] BoundResult WorldShapecast(PhysicsWorldObject *self,
                                                           PyObject *const *args, size_t nargsf,
                                                           PyObject *kwnames) {
     int shape_type         = 0;
@@ -274,7 +275,7 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
                                         ignore_handle);
     if (!parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return Adopt(nullptr);
     }
 
     JPH::Real position_x;
@@ -290,15 +291,15 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
     float size[4];
     if (ParseResult parsed = ParseVec3Into(o_position, position_x, position_y, position_z); !parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return Adopt(nullptr);
     }
     if (ParseResult parsed = ParseQuatInto(o_rotation, rotation_x, rotation_y, rotation_z, rotation_w); !parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return Adopt(nullptr);
     }
     if (ParseResult parsed = ParseVec3Into(o_direction, direction_x, direction_y, direction_z); !parsed) {
         RaiseParseError(parsed.error());
-        return nullptr;
+        return Adopt(nullptr);
     }
     ParseBodySize(o_size, size);
 
@@ -314,16 +315,16 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
     }
 
         if (!status) {
-        return QueryStatusError(status.error(), "Invalid shape parameters or cache failure");
+        return Adopt(QueryStatusError(status.error(), "Invalid shape parameters or cache failure"));
     }
     const PhysicsShapecastHit &hit = *status;
     if (!hit.hasHit) {
-        Py_RETURN_NONE;
+        return BorrowedValue(Py_None);
     }
 
-    return BuildTuple(hit.handle.Raw(), hit.fraction,
+    return Adopt(BuildTuple(hit.handle.Raw(), hit.fraction,
                               BuildTuple(hit.point.GetX(), hit.point.GetY(), hit.point.GetZ()),
-                              BuildTuple(hit.normal.GetX(), hit.normal.GetY(), hit.normal.GetZ()));
+                              BuildTuple(hit.normal.GetX(), hit.normal.GetY(), hit.normal.GetZ())));
 }
 
 } // namespace CPH::Python
