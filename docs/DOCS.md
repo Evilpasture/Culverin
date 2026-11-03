@@ -1849,6 +1849,20 @@ Retrieves a detailed snapshot of the physical state for every limb in the ragdol
 - **Diagnostic Usage:** While highly optimized, this method still creates Python objects for every limb. For high-performance data extraction (e.g., feeding a neural network), prefer using the global `world.positions` and `world.velocities` memoryviews combined with the limb handles.
 
 
+### destroy(...)
+
+Releases the native ragdoll immediately: its parts leave the physics system, their body slots are returned, and the handles from `get_body_handles()` stop being valid. The Python object stays usable but inert.
+
+**Returns:**
+- **`None`**
+
+**Operational Features:**
+- **Deterministic Teardown:** The ragdoll is released at the call, not when the last Python reference happens to drop. Use this when you need the body budget back for the same frame, rather than at some later collection point.
+- **Idempotent:** Calling `destroy()` more than once is a no-op, so teardown paths do not need to track whether it already ran.
+- **Access After Destroy Raises:** `drive_to_pose`, `get_body_handles` and `get_debug_info` raise `RuntimeError` instead of reading released memory. `get_body_handles()` would otherwise report handles to bodies that no longer exist.
+- **World Reference Released:** The ragdoll's own hold on the `PhysicsWorld` is dropped too, so a destroyed ragdoll no longer keeps the world alive.
+
+
 ## class RagdollSettings
 
 ### add_part(...)

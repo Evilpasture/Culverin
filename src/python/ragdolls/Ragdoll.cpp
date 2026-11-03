@@ -93,6 +93,32 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
     Py_RETURN_FALSE;
 }
 
+// Drops the native ragdoll, which takes it out of the physics system and
+// releases its body slots. Idempotent, because destroy(), tp_clear and
+// tp_dealloc all reach it and any of them may run first. Returns whether it
+// actually released anything.
+bool RagdollReleaseNative(RagdollObject *self) {
+    if (self->ragdoll == nullptr) {
+        return false;
+    }
+    // ~Ragdoll locks the world's shadow lock and releases body slots through
+    // its own PhysicsWorld*, so the world reference must outlive this call.
+    // Every caller drops it afterwards, never before.
+    delete self->ragdoll;
+    self->ragdoll = nullptr;
+    return true;
+}
+
+// One message for every access-after-destroy. Kept separate from the
+// construction-failure wording: a caller that never called destroy() and still
+// sees this has a construction bug, and a caller that did call it should be
+// told exactly that instead of being pointed at construction.
+[[nodiscard]] PyObject *RagdollNotLive() {
+    PyErr_SetString(PyExc_RuntimeError,
+                    "Ragdoll has been destroyed or was never attached to a world");
+    return nullptr;
+}
+
 [[nodiscard]] PyObject * RagdollDriveToPose(RagdollObject *self,
                                                               PyObject *const *args, size_t nargsf,
                                                               PyObject *kwnames) {
@@ -109,15 +135,14 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
         return nullptr;
     }
 
-    // A ragdoll cannot be constructed without both of these, so this only
-    // fires if construction half-failed. It raises rather than returning None:
-    // reporting success for a call that did nothing is the one thing a
-    // half-constructed object must not do, and it is indistinguishable from
-    // "the pose was applied" at the Python boundary.
+    // `self->ragdoll == nullptr` means destroy() already ran (or construction
+    // failed). It raises rather than returning None: reporting success for a
+    // call that did nothing is indistinguishable from "the pose was applied"
+    // at the Python boundary. `self->world == nullptr` is the cleared-by-GC
+    // case; the native ragdoll is still alive, so the call is still refused
+    // because it needs the world's shadow lock.
     if (!self->ragdoll || !self->world) [[unlikely]] {
-        PyErr_SetString(PyExc_RuntimeError,
-                        "Ragdoll is not attached to a world (construction failed)");
-        return nullptr;
+        return RagdollNotLive();
     }
 
     // 2. RESOURCE ACQUISITION
@@ -154,11 +179,10 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
 [[nodiscard]] PyObject * RagdollGetBodyHandles(RagdollObject *self,
                                                                  PyObject *args [[maybe_unused]]) {
     // Same contract as drive_to_pose and get_debug_info: a missing native
-    // ragdoll is an error, not an empty answer.
+    // ragdoll is an error, not an empty answer. After destroy() there are no
+    // part handles left to report.
     if (!self->ragdoll) [[unlikely]] {
-        PyErr_SetString(PyExc_RuntimeError,
-                        "Ragdoll is not attached to a world (construction failed)");
-        return nullptr;
+        return RagdollNotLive();
     }
 
     const int body_count = self->ragdoll->BodyCount();
@@ -203,12 +227,30 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
     return list;
 }
 
+// Manual lifetime control, matching Vehicle.destroy().
+//
+// Releases the native ragdoll immediately -- out of the physics system, body
+// slots returned, part handles invalidated -- instead of waiting for the last
+// Python reference to go. The Python object stays valid but inert: every
+// accessor raises instead of reading freed memory, and calling destroy() again
+// is a no-op, so teardown paths can call it without tracking state.
+[[nodiscard]] PyObject *RagdollDestroy(RagdollObject *self,
+                                       PyObject *ignored [[maybe_unused]]) {
+    RagdollReleaseNative(self);
+
+    // Release the world reference held for the ragdoll's lifetime now rather
+    // than at dealloc: this is the point at which the ragdoll stops needing
+    // the world, and holding it longer is what made a destroyed ragdoll keep a
+    // whole PhysicsWorld alive.
+    Py_CLEAR(self->world);
+
+    Py_RETURN_NONE;
+}
+
 [[nodiscard]] PyObject * RagdollGetDebugInfo(RagdollObject *self,
                                                                PyObject *ignored [[maybe_unused]]) {
     if (!self->ragdoll || !self->world) [[unlikely]] {
-        PyErr_SetString(PyExc_RuntimeError,
-                        "Ragdoll is not attached to a world (construction failed)");
-        return nullptr;
+        return RagdollNotLive();
     }
 
     const int body_count = self->ragdoll->BodyCount();
@@ -322,16 +364,44 @@ void RagdollSettingsDealloc(RagdollSettingsObject *self) {
 
 // --- Ragdoll Instance Implementation ---
 
+// --- Object lifetime ---------------------------------------------------------
+
+// RagdollObject is a GC type like Character and Vehicle: it holds a reference
+// to the world, and without tp_traverse/tp_clear a cycle through a Python
+// container keeps the whole PhysicsWorld -- and every body pooled inside it --
+// alive until interpreter shutdown, because the collector cannot see the edge.
+
+[[nodiscard]] int RagdollTraverse(RagdollObject *self, visitproc visit, void *arg) {
+    Py_VISIT(self->world);
+    return 0;
+}
+
+// tp_clear may run before tp_dealloc, and CPH::Ragdoll holds a raw
+// PhysicsWorld* that it dereferences in ~Ragdoll -- locks, slot release, the
+// physics system. Dropping the world reference here while the native ragdoll is
+// still alive leaves that pointer dangling, which is a use-after-free during
+// collection (a segfault, or "double free or corruption" from the allocator).
+//
+// So the native is released *first*. It only needs the world, never the Python
+// wrapper, so afterwards the world reference can go and the collector is free
+// to break the cycle. This is the sequence tp_dealloc uses too.
+[[nodiscard]] int RagdollClear(RagdollObject *self) {
+    RagdollReleaseNative(self);
+    Py_CLEAR(self->world);
+    return 0;
+}
+
 void RagdollDealloc(RagdollObject *self) {
-    // Destroying the native ragdoll takes it out of the physics system and
-    // releases its body slots; it has to happen before the world reference goes.
-    delete self->ragdoll;
-    self->ragdoll = nullptr;
+    PyObject_GC_UnTrack(self);
+
+    // Order matters: the ragdoll has to leave the physics system before the
+    // world reference it depends on goes away.
+    RagdollReleaseNative(self);
 
     delete self->parsers;
     self->parsers = nullptr;
 
-    Py_XDECREF(self->world);
+    Py_CLEAR(self->world);
     Py_TYPE(self)->tp_free(reinterpret_cast<PyObject *>(self));
 }
 
@@ -472,11 +542,14 @@ static PyMethodDef RagdollMethods[] = {
     CPH::Python::FastCallMethod("drive_to_pose", RagdollDriveToPose),
     CPH::Python::NoArgsMethod("get_body_handles", RagdollGetBodyHandles),
     CPH::Python::NoArgsMethod("get_debug_info", RagdollGetDebugInfo),
+    CPH::Python::NoArgsMethod("destroy", RagdollDestroy),
     {},
 };
 
 static PyType_Slot RagdollSlots[] = {
     {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(RagdollDealloc)},
+    {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(RagdollTraverse)},
+    {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(RagdollClear)},
     {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(RagdollMethods)},
     {},
 };
@@ -484,7 +557,7 @@ static PyType_Slot RagdollSlots[] = {
 PyType_Spec RagdollSpec = {
     .name      = "culverin._culverin_c.Ragdoll",
     .basicsize = sizeof(RagdollObject),
-    .flags     = Py_TPFLAGS_DEFAULT,
+    .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
     .slots     = RagdollSlots,
 };
 

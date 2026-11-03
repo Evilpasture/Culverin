@@ -2448,7 +2448,9 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    auto obj = PyObject_New(RagdollObject, reinterpret_cast<PyTypeObject *>(st->ragdollType));
+    // GC allocation: RagdollObject has tp_traverse/tp_clear, so it must come
+    // from the GC allocator and be tracked once it holds a reference.
+    auto *obj = PyObject_GC_New(RagdollObject, reinterpret_cast<PyTypeObject *>(st->ragdollType));
     if (!obj) {
         return PyErr_NoMemory();
     }
@@ -2467,6 +2469,10 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
     Py_INCREF(self);
 
     self->viewShape[0] = static_cast<Py_ssize_t>(obj->ragdoll->registered_body_count());
+
+    // Tracked last: everything reachable from `obj` must be valid before the
+    // collector can see it.
+    PyObject_GC_Track(reinterpret_cast<PyObject *>(obj));
     return reinterpret_cast<PyObject *>(obj);
 }
 
