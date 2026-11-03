@@ -473,7 +473,16 @@ static int InitTypes(PyObject *m, ModuleState *st) {
             Py_DECREF(type);
             return -1;
         }
-        PyObject_SetAttrString(type, "__module__", mod_name);
+        // Untyped heap types in CPython 3.12+ expose a writable __module__,
+        // so this normally cannot fail -- but if it ever does, the exception
+        // would stay pending while module init carried on and reported
+        // success, which CPython turns into a SystemError at the import
+        // boundary. Check it like every other call in this loop.
+        if (PyObject_SetAttrString(type, "__module__", mod_name) < 0) {
+            Py_DECREF(type);
+            Py_DECREF(mod_name);
+            return -1;
+        }
         if (PyModule_AddObject(m, types[i].name, type) < 0) {
             Py_DECREF(type);
             return -1;

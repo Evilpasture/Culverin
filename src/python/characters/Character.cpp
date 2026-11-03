@@ -54,15 +54,16 @@ namespace CPH::Python {
                                              PyObject *ignored [[maybe_unused]]) {
     const JPH::RVec3 position = self->character->GetPosition();
 
-    PyObject *result = PyTuple_New(3);
-    if (!result) {
-        return nullptr;
-    }
-    // RVec3 carries the full precision the world was built with.
-    PyTuple_SET_ITEM(result, 0, PyFloat_FromDouble(position.GetX()));
-    PyTuple_SET_ITEM(result, 1, PyFloat_FromDouble(position.GetY()));
-    PyTuple_SET_ITEM(result, 2, PyFloat_FromDouble(position.GetZ()));
-    return result;
+    // BuildTuple, not PyTuple_New + PyTuple_SET_ITEM: SET_ITEM *steals*, so
+    // `SET_ITEM(t, i, PyFloat_FromDouble(v))` stored NULL into the slot if the
+    // float conversion failed (e.g. MemoryError). Py_DECREF tolerates NULL
+    // slots, so the tuple survived and reached the caller -- CPython then
+    // crashed when it touched the hole, far from the cause. BuildTuple checks
+    // every element and fails the whole call instead.
+    //
+    // RVec3 carries the full precision the world was built with, and BuildTuple
+    // dispatches double to PyFloat_FromDouble without narrowing.
+    return BuildTuple(position.GetX(), position.GetY(), position.GetZ());
 }
 
 [[nodiscard]] PyObject *CharacterGetLinearVelocity(CharacterObject *self,

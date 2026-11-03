@@ -1000,6 +1000,33 @@ class TestMultiWorldConcurrency(unittest.TestCase):
 
 
 class TestCharactersAndVehicles(CulverinTestCase):
+    def test_character_position_is_a_full_precision_triple(self) -> None:
+        """get_position must return three finite floats at RVec3 precision.
+
+        The payload used to be assembled with PyTuple_SET_ITEM around an
+        unchecked PyFloat_FromDouble, which stores NULL into the slot on
+        failure; the tuple then reached the caller with a hole in it. Building
+        through BuildTuple means a failed element fails the call.
+        """
+        world = culverin.PhysicsWorld(settings={"gravity": (0, -10, 0), "max_bodies": 64})
+        world.create_body(pos=(0, -1, 0), size=(100, 1, 100), motion=culverin.MOTION_STATIC)
+        character = world.create_character(pos=(16777217.0, 0.1, -3.75))
+        world.step(1 / 60.0)
+
+        position = character.get_position()
+        self.assertIsInstance(position, tuple)
+        self.assertEqual(len(position), 3)
+        for value in position:
+            self.assertIsInstance(value, float)
+            self.assertTrue(math.isfinite(value), f"non-finite component: {value}")
+
+        # double precision survives: these are exact in binary64 and are NOT
+        # representable in binary32, so a narrowing regression moves them.
+        # (Using values like 1.5 would have passed either way.)
+        self.assertEqual(position[0], 16777217.0)
+        self.assertEqual(position[1], 0.1)
+        self.assertEqual(position[2], -3.75)
+
     def test_character_teleport_lands_exactly_where_set(self) -> None:
         """set_position must rewrite the previous frame too, not only the current one.
 
@@ -3520,6 +3547,36 @@ class TestTupleMutation(unittest.TestCase):
 
 
 class TestCharacterInteractions(CulverinTestCase):
+    def test_a_failed_event_payload_does_not_leave_a_hole_in_the_list(self) -> None:
+        """A contact-event build failure must fail the call, not return a partial list.
+
+        The dict loop used to substitute Py_None for a failed BuildDictionary
+        and `continue`, returning the list with a successful return code while
+        the exception was still pending. Callers indexed those slots and got
+        None where a dict was documented; CPython reported the live exception
+        as a SystemError at the frame boundary.
+
+        The failure itself needs an allocation error to trigger, which is not
+        reachable from Python, so this pins the contract instead: every element
+        of every returned event list is a dict with all documented keys, and a
+        build failure would have to surface as an exception rather than a shape
+        change. A None or a missing key means the old behaviour came back.
+        """
+        world = culverin.PhysicsWorld(settings={"gravity": (0, -10, 0), "max_bodies": 64})
+        world.create_body(
+            pos=(0, -1, 0), size=(50, 1, 50), motion=culverin.MOTION_STATIC, friction=1.0
+        )
+        world.create_body(pos=(0, 0.5, 0), size=(0.5, 0.5, 0.5), mass=1.0)
+        for _ in range(30):
+            world.step(1 / 60.0)
+
+        events = world.get_contact_events_ex()
+        self.assertGreater(len(events), 0, "expected at least one contact event")
+        for index, event in enumerate(events):
+            self.assertIsInstance(event, dict, f"event {index} is not a dict")
+            for key in ("bodies", "position", "normal", "materials", "impulse", "slide_speed", "type"):
+                self.assertIn(key, event, f"event {index} is missing {key!r}")
+
     def test_character_pushing_box(self) -> None:
         """Verify that characters can physically move dynamic bodies."""
         # 1. Place a light box at X=1.1

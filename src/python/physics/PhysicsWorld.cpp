@@ -2582,9 +2582,13 @@ WorldGetContactEventsEx(PhysicsWorldObject *self, PyObject *args [[maybe_unused]
                               k_slide, slim->slidingSpeed, k_type, slim->flags);
 
         if (!dict) [[unlikely]] {
-            Py_INCREF(Py_None);
-            PyList_SET_ITEM(list, static_cast<Py_ssize_t>(i), Py_None);
-            continue;
+            // Do not paper over the failure with None. The exception set by
+            // BuildDictionary is still pending, so returning `list` here handed
+            // back a half-built sequence with a successful return code while an
+            // error was live -- CPython reports that mismatch at the frame
+            // boundary as a SystemError, not as the MemoryError that happened.
+            Py_DECREF(list);
+            return nullptr;
         }
 
         // Steals ref to dict created by FastBuild
