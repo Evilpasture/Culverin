@@ -238,16 +238,12 @@ bool ParseWheelConfigs(PyObject *py_wheels, std::vector<CPH::WheelConfig> &out) 
     }
 
     ModuleState *state = GetModuleState(PyType_GetModule(Py_TYPE(self)));
-    auto         *obj  = PyObject_GC_New(VehicleObject,
-                                         reinterpret_cast<PyTypeObject *>(state->vehicleType));
+    auto         *obj  = VehicleObject::New(reinterpret_cast<PyTypeObject *>(state->vehicleType));
     if (obj == nullptr) {
         return nullptr;
     }
-    // GC_New leaves the storage uninitialised, and the failure paths below
-    // decref the object, so every field is set before anything can fail.
-    obj->world   = nullptr;
-    obj->vehicle = nullptr;
-    obj->parsers = nullptr;
+    // The base zeroes every member, so the failure path below can decref a
+    // half-built object safely.
 
     obj->parsers = CPH::Python::NewParserGroup<CPH::Python::VehicleParsers>();
     if (obj->parsers == nullptr) {
@@ -257,16 +253,15 @@ bool ParseWheelConfigs(PyObject *py_wheels, std::vector<CPH::WheelConfig> &out) 
 
     obj->vehicle = created->release();
 
-    // Exactly one strong reference to the world, released exactly once by
-    // VehicleDealloc (Py_XDECREF(self->world)). There used to be a second
+    // Exactly one strong reference to the world, released exactly once by the
+    // GC hooks. There used to be a second
     // Py_INCREF(self) here, which nothing balanced: every wheeled vehicle
     // leaked a whole PhysicsWorld reference, so the world -- and everything it
     // owned -- stayed alive as long as any vehicle object existed. Tracked
     // vehicles never did this, so the two paths disagreed.
     obj->world = reinterpret_cast<PhysicsWorldObject *>(Py_NewRef(self));
 
-    PyObject_GC_Track(reinterpret_cast<PyObject *>(obj));
-    return reinterpret_cast<PyObject *>(obj);
+    return obj->Publish();
 }
 
 // --- Controls ----------------------------------------------------------------
@@ -346,16 +341,9 @@ PyObject *WheelQuery(VehicleObject *self, PyObject *const *args, size_t nargsf, 
 }
 
 // --- Lifecycle ---------------------------------------------------------------
-
-[[nodiscard]] int VehicleTraverse(VehicleObject *self, visitproc visit, void *arg) {
-    Py_VISIT(self->world);
-    return 0;
-}
-
-[[nodiscard]] int VehicleClear(VehicleObject *self) {
-    Py_CLEAR(self->world);
-    return 0;
-}
+//
+// dealloc, traverse and clear all come from PyGcObject; VehicleBinding.hpp
+// declares what they act on.
 
 [[nodiscard]] PyObject *VehicleDestroy(VehicleObject *self,
                                        PyObject *ignored [[maybe_unused]]) {
@@ -364,20 +352,6 @@ PyObject *WheelQuery(VehicleObject *self, PyObject *const *args, size_t nargsf, 
     Py_RETURN_NONE;
 }
 
-void VehicleDealloc(VehicleObject *self) {
-    PyObject_GC_UnTrack(self);
-
-    // The vehicle is registered with the physics system and has to leave it
-    // before the world reference goes away.
-    delete self->vehicle;
-    self->vehicle = nullptr;
-
-    delete self->parsers;
-    self->parsers = nullptr;
-
-    Py_XDECREF(self->world);
-    Py_TYPE(self)->tp_free(reinterpret_cast<PyObject *>(self));
-}
 
 [[nodiscard]] PyObject *VehicleGetWheelCount(VehicleObject *self,
                                              [[maybe_unused]] void *closure) {
@@ -400,19 +374,15 @@ static PyGetSetDef VehicleGetSets[] = {
 };
 
 static PyType_Slot VehicleSlots[] = {
-    {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(VehicleDealloc)},
-    {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(VehicleTraverse)},
-    {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(VehicleClear)},
+    CPH::Python::GcDeallocSlot<VehicleObject>(),
+    CPH::Python::GcTraverseSlot<VehicleObject>(),
+    CPH::Python::GcClearSlot<VehicleObject>(),
     {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kVehicleMethods)},
     {.slot = Py_tp_getset, .pfunc = reinterpret_cast<void *>(VehicleGetSets)},
     {},
 };
 
-PyType_Spec VehicleSpec = {
-    .name      = "culverin._culverin_c.Vehicle",
-    .basicsize = sizeof(VehicleObject),
-    .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
-    .slots     = VehicleSlots,
-};
+PyType_Spec VehicleSpec = CPH::Python::GcTypeSpec("culverin._culverin_c.Vehicle",
+                                                   sizeof(VehicleObject), VehicleSlots);
 
 } // namespace CPH::Python

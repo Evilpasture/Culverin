@@ -179,30 +179,8 @@ namespace CPH::Python {
 
 // --- Object lifecycle --------------------------------------------------------
 
-[[nodiscard]] int CharacterTraverse(CharacterObject *self, visitproc visit, void *arg) {
-    Py_VISIT(self->world);
-    return 0;
-}
-
-[[nodiscard]] int CharacterClear(CharacterObject *self) {
-    Py_CLEAR(self->world);
-    return 0;
-}
-
-void CharacterDealloc(CharacterObject *self) {
-    PyObject_GC_UnTrack(self);
-
-    // Destroying the character removes its step listener, releases the Jolt
-    // character and gives its body slot back; see ~CPH::Character.
-    delete self->character;
-    self->character = nullptr;
-
-    delete self->parsers;
-    self->parsers = nullptr;
-
-    Py_XDECREF(self->world);
-    Py_TYPE(self)->tp_free(reinterpret_cast<PyObject *>(self));
-}
+// There is no hand-written dealloc, traverse or clear here: PyGcObject derives
+// all three from the hooks in CharacterBinding.hpp.
 
 // --- Creation ----------------------------------------------------------------
 
@@ -237,8 +215,7 @@ void CharacterDealloc(CharacterObject *self) {
         return PyErr_NoMemory();
     }
 
-    auto *obj = PyObject_GC_New(
-        CharacterObject,
+    auto *obj = CharacterObject::New(
         reinterpret_cast<PyTypeObject *>(GetModuleState(PyType_GetModule(Py_TYPE(self)))
                                              ->characterType));
     if (!obj) {
@@ -260,8 +237,7 @@ void CharacterDealloc(CharacterObject *self) {
     self->viewShape[0] =
         static_cast<Py_ssize_t>(self->physics.count.load(std::memory_order::relaxed));
 
-    PyObject_GC_Track(reinterpret_cast<PyObject *>(obj));
-    return reinterpret_cast<PyObject *>(obj);
+    return obj->Publish();
 }
 
 static PyMethodDef kCharacterMethods[] = {
@@ -282,19 +258,16 @@ static PyGetSetDef CharacterGetSets[] = {
 };
 
 static PyType_Slot CharacterSlots[] = {
-    {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CharacterDealloc)},
-    {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(CharacterTraverse)},
-    {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(CharacterClear)},
+    CPH::Python::GcDeallocSlot<CharacterObject>(),
+    CPH::Python::GcTraverseSlot<CharacterObject>(),
+    CPH::Python::GcClearSlot<CharacterObject>(),
     {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kCharacterMethods)},
     {.slot = Py_tp_getset, .pfunc = reinterpret_cast<void *>(CharacterGetSets)},
     {},
 };
 
-PyType_Spec CharacterSpec = {
-    .name      = "culverin._culverin_c.Character",
-    .basicsize = sizeof(CharacterObject),
-    .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
-    .slots     = CharacterSlots,
-};
+PyType_Spec CharacterSpec =
+    CPH::Python::GcTypeSpec("culverin._culverin_c.Character", sizeof(CharacterObject),
+                            CharacterSlots);
 
 } // namespace CPH::Python

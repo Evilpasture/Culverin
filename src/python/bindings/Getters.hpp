@@ -3,6 +3,7 @@
 #include "core/Compiler.hpp"
 #include <cstddef>
 #include <new>
+#include "bindings/PyGcObject.hpp"
 #include <Python.h>
 
 namespace CPH::Python {
@@ -26,12 +27,37 @@ struct VehicleObject;
 // access, so an extra malloc per `world.positions` would be measurable.
 using BufferProxyPayload = CPH::Python::BufferProxy::Payload;
 
-struct BufferProxyObject {
-    PyObject_HEAD PyObject *owner;
-    alignas(CPH::Python::BufferProxy) std::byte proxyStorage[sizeof(CPH::Python::BufferProxy)];
+struct BufferProxyObject : PyGcObject<BufferProxyObject> {
+    PyObject *owner = nullptr;
+    alignas(CPH::Python::BufferProxy) std::byte proxyStorage[sizeof(CPH::Python::BufferProxy)] = {};
     // Buffer protocol metadata storage; the exported Py_buffer points here.
-    Py_ssize_t shape[1];
-    Py_ssize_t strides[1];
+    Py_ssize_t shape[1]   = {0};
+    Py_ssize_t strides[1] = {0};
+
+    // The export is returned to whichever domain issued it while the owner is
+    // still alive. This is why the hook runs before references are cleared.
+    void BeforeClear() noexcept {
+        if (owner != nullptr) {
+            Proxy().ReleaseExport();
+        }
+    }
+
+    template <typename Visitor>
+    void VisitRefs(Visitor &&visit) noexcept {
+        visit(owner);
+    }
+
+    // The storage comes from PyObject_GC_New and never held a C++ object until
+    // ProxyStorageInit() placement-news one, so the destructor has to be run by
+    // hand at dealloc and nowhere else.
+    void BeforeFree() noexcept {
+        Proxy().~BufferProxy();
+    }
+
+    // BufferProxy is constructed from its Payload, not from another proxy.
+    void ProxyStorageInit(CPH::Python::BufferProxy::Payload payload) noexcept {
+        new (proxyStorage) CPH::Python::BufferProxy(std::move(payload));
+    }
 
     [[nodiscard]] CPH::Python::BufferProxy &Proxy() noexcept {
         return *std::launder(reinterpret_cast<CPH::Python::BufferProxy *>(proxyStorage));

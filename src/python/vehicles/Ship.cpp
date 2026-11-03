@@ -59,7 +59,7 @@ namespace CPH::Python {
     }
 
     ModuleState *st = GetModuleState(PyType_GetModule(Py_TYPE(self)));
-    auto obj = PyObject_GC_New(ShipObject, reinterpret_cast<PyTypeObject *>(st->shipType));
+    auto *obj = ShipObject::New(reinterpret_cast<PyTypeObject *>(st->shipType));
     if (!obj) {
         return nullptr;
     }
@@ -73,11 +73,11 @@ namespace CPH::Python {
 
     obj->world = reinterpret_cast<PhysicsWorldObject *>(Py_NewRef(self));
     // The ship is registered with the physics system and must be destroyed
-    // before the world reference is dropped; ShipDealloc enforces that order.
+    // before the world reference is dropped; ShipObject::BeforeClear enforces
+    // that order.
     obj->ship = ship.release();
 
-    PyObject_GC_Track(reinterpret_cast<PyObject *>(obj));
-    return reinterpret_cast<PyObject *>(obj);
+    return obj->Publish();
 }
 
 [[nodiscard]] PyObject * ShipSetInput(ShipObject *self, PyObject *const *args, size_t nargsf,
@@ -98,46 +98,22 @@ namespace CPH::Python {
     Py_RETURN_NONE;
 }
 
-void ShipDealloc(ShipObject *self) {
-    PyObject_GC_UnTrack(self);
-
-    // Destroying the ship removes its step listener from the physics system.
-    delete self->ship;
-    self->ship = nullptr;
-
-    delete self->parsers;
-    self->parsers = nullptr;
-
-    Py_XDECREF(self->world);
-    Py_TYPE(self)->tp_free(reinterpret_cast<PyObject *>(self));
-}
-
-[[nodiscard]] int ShipTraverse(ShipObject *self, visitproc visit, void *arg) {
-    Py_VISIT(self->world);
-    return 0;
-}
-
-[[nodiscard]] int ShipClear(ShipObject *self) {
-    Py_CLEAR(self->world);
-    return 0;
-}
+// dealloc, traverse and clear all come from PyGcObject; ShipBinding.hpp says
+// what they act on. In particular BeforeClear() destroys the ship *before* the
+// world reference is dropped, which the hand-written tp_clear did not.
 
 static PyMethodDef kShipMethods[] = {CPH::Python::FastCallMethod("set_input", ShipSetInput),
                                      {nullptr, nullptr, 0, nullptr}};
 
 static PyType_Slot ShipSlots[] = {
-    {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(ShipDealloc)},
-    {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(ShipTraverse)},
-    {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(ShipClear)},
+    CPH::Python::GcDeallocSlot<ShipObject>(),
+    CPH::Python::GcTraverseSlot<ShipObject>(),
+    CPH::Python::GcClearSlot<ShipObject>(),
     {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kShipMethods)},
     {},
 };
 
-PyType_Spec ShipSpec = {
-    .name      = "culverin._culverin_c.Ship",
-    .basicsize = sizeof(ShipObject),
-    .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
-    .slots     = ShipSlots,
-};
+PyType_Spec ShipSpec =
+    CPH::Python::GcTypeSpec("culverin._culverin_c.Ship", sizeof(ShipObject), ShipSlots);
 
 } // namespace CPH::Python

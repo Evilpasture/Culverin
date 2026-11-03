@@ -798,6 +798,23 @@ Status of the migration:
   list: the `weakreflist` member and the members table are gone, and the
   dealloc clears weakrefs unconditionally.
 
+* **Object lifetime — one base, not seven conventions.** Every Python type that
+  owns native state was hand-wiring the same GC protocol, and each one did it
+  slightly differently: `Character`, `Vehicle`, `Ship` and `Ragdoll` allocated
+  with `PyObject_GC_New` (which takes a reference to the type) and then freed
+  through `tp_free` without a `Py_DECREF`, leaking one type reference per
+  instance; `Character`, `Vehicle` and `Ship` cleared the world reference
+  before destroying the native object that borrows the world's raw pointer, so
+  a cycle collected under pressure ran `~Character`/`~Vehicle`/`~Ship` against
+  a freed world; and only `PhysicsWorld` visited `Py_TYPE(self)` and cleared
+  weakrefs. `bindings/PyGcObject.hpp` now derives all of it -- the three slots,
+  `PyObject_GC_New`/`GC_Del`, tracking, the type decref and the weakref clear --
+  from two hooks a type must declare: `BeforeClear()`, which runs before any
+  reference is dropped, and `VisitRefs()`, which names the Python references.
+  Omitting either is a `static_assert`, not a leak found later;
+  `tests/test_object_lifetime.py` drives every GC type through the same
+  factories so a new type has an obvious place to be declared.
+
 * **Profiling.** `CPH_PROFILE_BEGIN`/`CPH_PROFILE_END`/`CPH_PROFILE_ACCUMULATE`
   and the no-op `CPH_INIT_PROFILER` are gone, replaced by RAII
   `CPH::ProfileScope` and `CPH::ProfileAccumulator` (core/Profiling.hpp). A

@@ -93,22 +93,6 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
     Py_RETURN_FALSE;
 }
 
-// Drops the native ragdoll, which takes it out of the physics system and
-// releases its body slots. Idempotent, because destroy(), tp_clear and
-// tp_dealloc all reach it and any of them may run first. Returns whether it
-// actually released anything.
-bool RagdollReleaseNative(RagdollObject *self) {
-    if (self->ragdoll == nullptr) {
-        return false;
-    }
-    // ~Ragdoll locks the world's shadow lock and releases body slots through
-    // its own PhysicsWorld*, so the world reference must outlive this call.
-    // Every caller drops it afterwards, never before.
-    delete self->ragdoll;
-    self->ragdoll = nullptr;
-    return true;
-}
-
 // One message for every access-after-destroy. Kept separate from the
 // construction-failure wording: a caller that never called destroy() and still
 // sees this has a construction bug, and a caller that did call it should be
@@ -236,7 +220,8 @@ bool RagdollReleaseNative(RagdollObject *self) {
 // is a no-op, so teardown paths can call it without tracking state.
 [[nodiscard]] PyObject *RagdollDestroy(RagdollObject *self,
                                        PyObject *ignored [[maybe_unused]]) {
-    RagdollReleaseNative(self);
+    // Same hook the collector uses, so destroy() and collection cannot drift.
+    self->BeforeClear();
 
     // Release the world reference held for the ragdoll's lifetime now rather
     // than at dealloc: this is the point at which the ragdoll stops needing
@@ -365,45 +350,11 @@ void RagdollSettingsDealloc(RagdollSettingsObject *self) {
 // --- Ragdoll Instance Implementation ---
 
 // --- Object lifetime ---------------------------------------------------------
-
-// RagdollObject is a GC type like Character and Vehicle: it holds a reference
-// to the world, and without tp_traverse/tp_clear a cycle through a Python
-// container keeps the whole PhysicsWorld -- and every body pooled inside it --
-// alive until interpreter shutdown, because the collector cannot see the edge.
-
-[[nodiscard]] int RagdollTraverse(RagdollObject *self, visitproc visit, void *arg) {
-    Py_VISIT(self->world);
-    return 0;
-}
-
-// tp_clear may run before tp_dealloc, and CPH::Ragdoll holds a raw
-// PhysicsWorld* that it dereferences in ~Ragdoll -- locks, slot release, the
-// physics system. Dropping the world reference here while the native ragdoll is
-// still alive leaves that pointer dangling, which is a use-after-free during
-// collection (a segfault, or "double free or corruption" from the allocator).
 //
-// So the native is released *first*. It only needs the world, never the Python
-// wrapper, so afterwards the world reference can go and the collector is free
-// to break the cycle. This is the sequence tp_dealloc uses too.
-[[nodiscard]] int RagdollClear(RagdollObject *self) {
-    RagdollReleaseNative(self);
-    Py_CLEAR(self->world);
-    return 0;
-}
-
-void RagdollDealloc(RagdollObject *self) {
-    PyObject_GC_UnTrack(self);
-
-    // Order matters: the ragdoll has to leave the physics system before the
-    // world reference it depends on goes away.
-    RagdollReleaseNative(self);
-
-    delete self->parsers;
-    self->parsers = nullptr;
-
-    Py_CLEAR(self->world);
-    Py_TYPE(self)->tp_free(reinterpret_cast<PyObject *>(self));
-}
+// dealloc, traverse and clear all come from PyGcObject. RagdollBinding.hpp
+// declares what they act on: BeforeClear() releases the native ragdoll before
+// any reference is dropped (the ordering ~Ragdoll requires), VisitRefs() names
+// the world reference, and BeforeFree() releases the parsers.
 
 [[nodiscard]] PyObject * RagdollSettingsAddPart(RagdollSettingsObject *self,
                                                                   PyObject *const *args,
@@ -547,18 +498,14 @@ static PyMethodDef RagdollMethods[] = {
 };
 
 static PyType_Slot RagdollSlots[] = {
-    {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(RagdollDealloc)},
-    {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(RagdollTraverse)},
-    {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(RagdollClear)},
+    CPH::Python::GcDeallocSlot<RagdollObject>(),
+    CPH::Python::GcTraverseSlot<RagdollObject>(),
+    CPH::Python::GcClearSlot<RagdollObject>(),
     {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(RagdollMethods)},
     {},
 };
 
-PyType_Spec RagdollSpec = {
-    .name      = "culverin._culverin_c.Ragdoll",
-    .basicsize = sizeof(RagdollObject),
-    .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
-    .slots     = RagdollSlots,
-};
+PyType_Spec RagdollSpec = CPH::Python::GcTypeSpec("culverin._culverin_c.Ragdoll",
+                                                   sizeof(RagdollObject), RagdollSlots);
 
 } // namespace CPH::Python
